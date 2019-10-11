@@ -1,0 +1,7 @@
+add 18 white king
+add 15 black man
+add 7 black man
+add 6 black man
+add 14 black king
+autoshow true board
+peek 18
