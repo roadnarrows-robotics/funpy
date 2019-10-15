@@ -781,96 +781,68 @@ class CheckersBoard:
       return f"position {pos} ?)"
     return f"position {rnum} ({row},{col})"
 
-
 #------------------------------------------------------------------------------
-# Class Checkers
+# Class CheckersMove
 #------------------------------------------------------------------------------
-class Checkers:
-  """ Checkers game abstract base class. """
-
-  # game state
-  class State(Enum):
-    NOT_STARTED = 0   # game not started
-    IN_PLAY     = 1   # game in play
-    GAME_OVER   = 2   # game is over
-
-  # move operators
-  class Mop:
-    SIMPLE  = '-'   # simple diagonal adjacent square move
-    JUMP    = 'x'   # jump diagonal capture move 
-    ANY     = '-x'  # any move
+class CheckersMove:
+  """
+  CheckersMove class
   
-  def __init__(self, name, size):
+  Class defines move operations given a game with board.
+  """
+
+  # parsed token container
+  Token = collections.namedtuple('Token', ['type', 'value', 'column'])
+
+  def __init__(self):
+    """ Initializer. """
+    self.token_specification = [
+      ('RNUM',      r'[1-9]+'),                   # reachable number > 0
+      ('MOP',       f'[{Checkers.MopSym.ANY}]'),  # move operators
+      ('SKIP',      r'[ \t]+'),                   # skip over spaces and tabs
+      ('MISMATCH',  r'.'),                        # any other character
+    ]
+
+    self.tok_regex = '|'.join('(?P<%s>%s)' % \
+                              pair for pair in self.token_specification)
+
+  def token_generator(self, nota):
     """
-    Initializer.
+    Token generator.
 
     Parameters:
-      name    Name (type) of game string.
-      size    Board side size (squares).
+      nota    String specifying move in standard notation.
+
+    Yield:
+      Token.
     """
-    self.name       = name                              # name of this game
-    self._board     = CheckersBoard(size=size)          # the board
-    self.kur        = { CheckersPiece.Color.BLACK: [],
-                        CheckersPiece.Color.WHITE: [] } # ancient Sumerian hell
-    self.history    = []                                # game history
+    for mo in re.finditer(self.tok_regex, nota):
+      kind    = mo.lastgroup
+      value   = mo.group()
+      column  = mo.start()
+      if kind == 'RNUM':
+        value = int(value)
+      elif kind == 'SKIP':
+        continue
+      elif kind == 'MISMATCH':
+        raise RuntimeError(f"{value!r}", "unexpected token")
+      yield CheckersMove.Token(kind, value, column)
 
-    self._state     = Checkers.State.NOT_STARTED        # game not started
-    self._move_num  = 0                                 # move number
-    self._turn      = CheckersPiece.Color.BLACK         # black goes first
+  def tokenize(self, nota):
+    """
+    Tokenize notation.
 
-  def __repr__(self):
-    return  f"{self.__module__}.{self.__class__.__name__}"\
-            f"({name!r}, {size!r})"
+    Parameters:
+      nota    String specifying move in standard notation.
 
-  def __str__(self):
-    return f"{self.board.size}x{self.board.size} {self.name}"
-
-  def clear(self):
-    self._board.clear()
-    self.kur[CheckersPiece.Color.BLACK] = []
-    self.kur[CheckersPiece.Color.WHITE] = []
-    self.history    = []
-    self._state     = Checkers.State.NOT_STARTED
-    self._move_num  = 0
-    self._turn      = CheckersPiece.Color.BLACK
-  
-  def setup(self):
-    """ Starting position. """
-    self.clear()
-    self._state     = Checkers.State.NOT_STARTED
-    self._move_num  = 1
-    self._turn      = CheckersPiece.Color.BLACK
-
-  def starting_position(self):
-    func_name = self.__class__.__name__ + '.set_starting_position'
-    raise CheckersError(func_name, "must be defined in derived class")
-
-  def make_a_move(self, turn, path):
-    if self._state == Checkers.State.NOT_STARTED:
-      self.start()  # auto-start
-    elif self._state == Checkers.State.GAME_OVER:
-      raise CheckersError("game not setup")
-
-  def goto_hell(self, piece):
-    self.kur[piece.color].append(piece)
-
-  def start(self):
-    if self.board.numof_black_pieces() == 0:
-      raise CheckersError("no black pieces on board to play a game.")
-    if self.board.numof_white_pieces() == 0:
-      raise CheckersError("no white pieces on board to play a game.")
-    self._state     = Checkers.State.IN_PLAY
-    self._move_num  = 1
-    self._turn      = CheckersPiece.Color.BLACK
-    # RDK add timer here
-
-  def stop(self):
-    self._state = Checkers.State.GAME_OVER  # game is over loosa loosa
-    # RDK record history here
-
-  def resign(self, color):
-    self._state = Checkers.State.GAME_OVER  # game is over loosa loosa
-    # RDK record history here
+    Return:
+      Returns list of parsed tokens.
+    """
+    tokens = []
+    for tok in self.token_generator(nota):
+      #print('DBG:', tok)
+      tokens.append(tok)
+    return tokens
 
   def get_move_pattern(self, piece):
     """
@@ -894,9 +866,407 @@ class Checkers:
     else:
       return []
 
+  def find_move_paths(self, game, rnum, jumps_only=False):
+    """
+    Find all possible move paths associated with the game and board state.
+    No moves are actually made.
+
+    A path is a list:
+      [rnum, mop, rnum ...]
+
+    Minimum assumptions are made of the game. There must exist a simple move
+    and a jump move.
+
+    A simple move only generates one path:
+      [rnum, '-', rnum1].
+
+    A jump move generates one or more paths:
+      [rnum, 'x', rnum1]
+      [rnum, 'x', rnum1, 'x', rnum2]
+        ...
+      [rnum, 'x', rnum1, 'x', rnum2, ..., 'x' rnumN]
+
+    Parameters:
+      game        The checkers game the move will operate on.
+      rnum        Starting move (and piece) position.
+      jumps_only  Do [not] only consider jump moves.
+      
+    Return:
+      Returns a list of zero or more paths.
+    """
+    paths = []
+    try:
+      piece = game.board.at(rnum)
+    except CheckersError:
+      return paths
+    row, col = game.board.rowcol(rnum)
+    deltas = self.get_move_pattern(piece)
+
+    # check all directions for moves
+    for drow, dcol in deltas:
+      row_adj = row + drow
+      col_adj = col + dcol
+
+      # adjacent is still on the board
+      if game.board.is_pos_on_board(row_adj, col_adj):
+        rnum_adj = game.board.rnum(row_adj ,col_adj)
+
+        # adjacent is occupied
+        if game.board.is_square_occupied(rnum_adj):
+          piece_adj = game.board.at(rnum_adj)
+
+          # occupied by the opponent
+          if piece.foe() == piece_adj.color:
+            row_jmp = row_adj + drow
+            col_jmp = col_adj + dcol
+
+            # jump move
+            if  game.board.is_pos_on_board(row_jmp, col_jmp) and \
+                game.board.is_square_empty(row_jmp, col_jmp):
+
+              rnum_jmp = game.board.rnum(row_jmp ,col_jmp)
+              path_jmp = [rnum, Checkers.MopSym.JUMP, rnum_jmp]
+              #path_jmp = [rnum, (Checkers.MopSym.JUMP, rnum_adj), rnum_jmp]
+              paths.append(path_jmp)
+
+              # virtual move
+              game.board.move_piece(rnum, rnum_jmp)
+              piece_cap = game.board.remove_piece(rnum_adj)
+
+              if game.board.promotable(rnum_jmp):
+                game.board.promote_piece(rnum_jmp)
+                undo_promo = True
+              else:
+                undo_promo = False
+
+              paths_move = self.find_move_paths(game, rnum_jmp, jumps_only=True)
+              for p in paths_move:
+                paths.append(self.join(path_jmp, p))
+
+              # undo virtual move
+              game.board.replace_piece(rnum_adj, piece_cap)
+              game.board.move_piece(rnum_jmp, rnum)
+              if undo_promo:
+                game.board.demote_piece(rnum)
+
+        # simple move
+        elif not jumps_only:    # empty
+          paths.append([rnum, Checkers.MopSym.SIMPLE, rnum_adj])
+
+    return paths
+
+  def has_a_move(self, game, rnum):
+    try:
+      piece = game.board.at(rnum)
+    except CheckersError:
+      return False
+
+    row, col = game.board.rowcol(rnum)
+    deltas = game.get_move_pattern(piece)
+
+    # check all directions for moves
+    for drow, dcol in deltas:
+      row_adj = row + drow
+      col_adj = col + dcol
+
+      # adjacent is still on the board
+      if game.board.is_pos_on_board(row_adj, col_adj):
+        rnum_adj = game.board.rnum(row_adj ,col_adj)
+
+        # simple move available
+        if game.board.is_square_empty(rnum_adj):
+          return True
+
+        # adjacent is occupied
+        else:
+          piece_adj = game.board.at(rnum_adj)
+
+          # occupied by the opponent
+          if piece.foe() == piece_adj.color:
+            row_jmp = row_adj + drow
+            col_jmp = col_adj + dcol
+
+            # jump move available
+            if  game.board.is_pos_on_board(row_jmp, col_jmp) and \
+                game.board.is_square_empty(row_jmp, col_jmp):
+              return True
+
+    return False
+
+  def execute_move(self, game, path):
+    # First pass: validate
+    if len(path) < 3:
+      raise CheckersError(f"{path!r}", "move path too short")
+    rnum0 = path[0]
+    piece = game.board.at(rnum0)
+    if piece.color != game.turn:
+      raise CheckersError(f"{piece}", f"it's {game.turn.name.lower()}'s turn")
+    candidate_paths = self.find_move_paths(game, rnum0)
+    if path not in candidate_paths:
+      raise CheckersError(f"{self.path_to_nota(path)}", "not a legal move")
+
+    # Second pass: execute move
+    promoted  = piece.caste == CheckersPiece.Caste.KING
+    rnum_i    = rnum0
+    i         = 1
+    while i < len(path):
+      mop     = path[i]
+      rnum_j  = path[i+1]
+      if mop == Checkers.MopSym.SIMPLE:
+        pass
+      elif mop == Checkers.MopSym.JUMP:
+        rnum_jmp = self.jumped_square(game, rnum_i, rnum_j)
+        game.goto_hell(game.board.remove_piece(rnum_jmp))
+      rnum_i = rnum_j
+      row_i, col_i = game.board.rowcol(rnum_i)
+      if not promoted and row_i == game.board.kings_row(piece.color):
+        game.board.promote_piece(rnum0, only_kings_row=False)
+        promoted= True
+      i += 2
+    game.board.move_piece(rnum0, rnum_i)
+
+  def jumped_square(self, game, rnum0, rnum1):
+    row0,col0 = game.board.rowcol(rnum0)
+    row1,col1 = game.board.rowcol(rnum1)
+    if row1 > row0:
+      rowj = row1 - 1
+    else:
+      rowj = row1 + 1
+    if col1 > col0:
+      colj = col1 - 1
+    else:
+      colj = col1 + 1
+    return game.board.rnum(rowj, colj)
+
+  def join(self, path0, path1):
+    """
+    Join two move paths into one path.
+
+    The last destination square specified in the first path must match the
+    first source square in the second path.
+
+    Parameters:
+      path0   Move path to prepend.
+      path1   Move path to append.
+
+    Return:
+      Move path.
+    """
+    if len(path0) == 0:
+      return path1
+    elif len(path1) == 0:
+      return path0
+    elif path0[-1] == path1[0]:
+      return path0 + path1[1:]
+    else:
+      raise CheckersError(f"path0 {path0[-1]} != path1 {path1[0]}")
+
+  def max_path(self, paths):
+    """
+    Return the move path of maximum length. If two or move paths have the
+    same maximum length, the first path is returned.
+
+    Paramaters:
+      paths   List of move paths.
+
+    Return:
+      Returns path of maximum length. May be empty.
+    """
+    path  = []
+    for p in paths:
+      if len(p) > len(path):
+        path = p
+    return path
+
+  def rnums_in_paths(self, paths):
+    rnums = []
+    for path in paths:
+      for p in path:
+        if str(p) in Checkers.MopSym.ANY:
+          continue
+        elif p not in rnums:
+          rnums.append(p)
+    return rnums
+
+  def path_to_nota(self, path):
+    """
+    Convert move path to standard checkers notation.
+
+    Parameters:
+      path    Move path.
+
+    Return:
+      String
+    """
+    return ''.join(f"{v}" for v in path)
+
+  def nota_to_path(self, nota):
+    """
+    Convert notation string to move path
+
+    Parameters:
+      nota  String in standard checkers notation.
+
+    Return:
+      Move path list.
+    """
+    try:
+      tokens = self.tokenize(nota)
+    except RunTimeError as e:
+      raise CheckersError(*e.args)
+    path = []
+    expect = ['RNUM', 'MOP']
+    i = 0
+    for tok in tokens:
+      if tok.type == expect[i]:
+        path.append(tok.value)
+      else:
+        raise CheckersError(f"{nota!r}", f"{tok.value!r}",
+              f"expected {expect[i].lower()!r}, got {tok.type.lower()!r}")
+      i = (i + 1) % 2
+    if len(tokens) % 2 == 0:
+      raise CheckersError(f"{nota!r}", "missing last rnum")
+    return path
+
+#------------------------------------------------------------------------------
+# Class Checkers
+#------------------------------------------------------------------------------
+class Checkers:
+  """ Checkers game abstract base class. """
+
+  # game state
+  class State(Enum):
+    NOT_STARTED = 0   # game not started
+    IN_PLAY     = 1   # game in play
+    GAME_OVER   = 2   # game is over
+
+  # move operator symbols
+  class MopSym:
+    SIMPLE  = '-'   # simple diagonal adjacent square move
+    JUMP    = 'x'   # jump diagonal capture move 
+    ANY     = '-x'  # any move
+  
+  def __init__(self, name, size, mop=CheckersMove):
+    """
+    Initializer.
+
+    Parameters:
+      name    Name (type) of game string.
+      size    Board side size (squares).
+      mop     Checkers game move operator of pieces.
+    """
+    self._name      = name                              # name of this game
+    self._mop       = mop()                             # move operator object
+    self._board     = CheckersBoard(size=size)          # the board
+    self._kur       = { CheckersPiece.Color.BLACK: [],
+                        CheckersPiece.Color.WHITE: [] } # ancient Sumerian hell
+    self._history   = []                                # game history
+
+    self._state     = Checkers.State.NOT_STARTED        # game not started
+    self._move_num  = 0                                 # move number
+    self._turn      = CheckersPiece.Color.BLACK         # black goes first
+
+  def __repr__(self):
+    return  f"{self.__module__}.{self.__class__.__name__}"\
+            f"({self._name!r}, {self._board.size!r}, {self._mop!r})"
+
+  def __str__(self):
+    return f"{self.board.size}x{self.board.size} {self.name}"
+
+  def clear(self):
+    self._board.clear()
+    self._kur[CheckersPiece.Color.BLACK] = []
+    self._kur[CheckersPiece.Color.WHITE] = []
+    self._history   = []
+    self._state     = Checkers.State.NOT_STARTED
+    self._move_num  = 0
+    self._turn      = CheckersPiece.Color.BLACK
+  
+  def setup(self):
+    """ Starting position. """
+    self.clear()
+    self._state     = Checkers.State.NOT_STARTED
+    self._move_num  = 1
+    self._turn      = CheckersPiece.Color.BLACK
+
+  def make_a_move(self, path):
+    #print(f'DBG: make_a_move({path})')
+    if self._state == Checkers.State.NOT_STARTED:
+      self.start()  # auto-start
+    elif self._state == Checkers.State.GAME_OVER:
+      raise CheckersError("game not setup")
+    if isinstance(path, str):
+      path = self.mop.nota_to_path(path)
+      #print(f'DBG: make_a_move: {path}')
+    self.mop.execute_move(self, path)
+    self.add_move_to_history(path)
+    if self.is_game_over():
+      pass
+    else:
+      self._turn = CheckersPiece.opposite_color(self.turn)
+      if self.turn == CheckersPiece.Color.BLACK:
+        self._move_num += 1
+
+  def take_a_peek(self, rnum):
+    return self.mop.find_move_paths(self, rnum)
+
+  def goto_hell(self, piece):
+    self._kur[piece.color].append(piece)
+
+  def start(self):
+    if self.board.numof_black_pieces() == 0:
+      raise CheckersError("no black pieces on board to play a game.")
+    if self.board.numof_white_pieces() == 0:
+      raise CheckersError("no white pieces on board to play a game.")
+    self._state     = Checkers.State.IN_PLAY
+    self._move_num  = 1
+    self._turn      = CheckersPiece.Color.BLACK
+    # RDK add timer here
+    self.add_event_to_history("STARTED at x")
+
+  def stop(self):
+    self._state = Checkers.State.GAME_OVER  # game is over loosa loosa
+    # RDK record history here
+
+  def resign(self, color):
+    self._state = Checkers.State.GAME_OVER  # game is over loosa loosa
+    # RDK record history here
+
+  def is_game_over(self):
+    return False
+
+  def add_event_to_history(self, event):
+    self._history.append(event)
+
+  def add_move_to_history(self, path):
+    if isinstance(path, str):
+      nota = path
+    else:
+      nota = self.mop.path_to_nota(path)
+    if self.turn == CheckersPiece.Color.BLACK:
+      self._history.append(f" {self.move_num}. " + nota)
+    else:
+      self._history.append(nota)
+
+  @property
+  def name(self):
+    return self._name
+
   @property
   def board(self):
     return self._board
+
+  @property
+  def mop(self):
+    return self._mop
+
+  @property
+  def kur(self):
+    return self._kur
+
+  @property
+  def history(self):
+    return self._history
 
   @property
   def state(self):
@@ -909,6 +1279,26 @@ class Checkers:
   @property
   def turn(self):
     return self._turn
+
+  # . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+  # Visualize
+  # . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+
+  def print_kur(self, **print_kwargs):
+    if 'end' in print_kwargs:
+      del print_kwargs['end']
+    for color in [CheckersPiece.Color.BLACK, CheckersPiece.Color.WHITE]:
+      print(f"{color.name.lower()}: ", **print_kwargs, end='')
+      for cursed in self.kur[color]:
+        print(f"{cursed.fqname()} ", **print_kwargs, end='')
+      print('', **print_kwargs, end='\n')
+
+  def print_history(self, **print_kwargs):
+    if 'end' in print_kwargs:
+      del print_kwargs['end']
+    for event in self.history:
+      print(f"{event} ", **print_kwargs, end='')
+    print('', **print_kwargs, end='\n')
 
 #------------------------------------------------------------------------------
 # Class EnglishDraughts
@@ -926,9 +1316,6 @@ class EnglishDraughts(Checkers):
       self.board.add_new_piece(rnum, 'black', 'man')
     for rnum in range(21, 33):
       self.board.add_new_piece(rnum, 'white', 'man')
-
-  def make_a_move(self, path):
-    pass
 
 ##-
 class EnglishDraughtsVariation(Checkers):
@@ -951,14 +1338,21 @@ class CheckersMove:
   def __init__(self):
     """ Initializer. """
     self.token_specification = [
-      ('RNUM',      r'[1-9]+'),               # reachable number > 0
-      ('MOP',       f'[{Checkers.Mop.ANY}]'), # move operators
-      ('SKIP',      r'[ \t]+'),               # skip over spaces and tabs
-      ('MISMATCH',  r'.'),                    # any other character
+      ('RNUM',      r'[1-9]+'),                   # reachable number > 0
+      ('MOP',       f'[{Checkers.MopSym.ANY}]'),  # move operators
+      ('SKIP',      r'[ \t]+'),                   # skip over spaces and tabs
+      ('MISMATCH',  r'.'),                        # any other character
     ]
 
     self.tok_regex = '|'.join('(?P<%s>%s)' % \
                               pair for pair in self.token_specification)
+
+  def __repr__(self):
+    return f"{self.__module__}.{self.__class__.__name__}"\
+      f"()"
+
+  def __str__(self):
+    return f"{self.__class__.__name__}"
 
   def token_generator(self, nota):
     """
@@ -1006,11 +1400,12 @@ class CheckersMove:
     A path is a list:
       [rnum, mop, rnum ...]
 
-    Minimum assumptions are made of the game.
+    Minimum assumptions are made of the game. There must exist a simple move
+    and a jump move.
 
-    There exist a simple move and a jump move.
     A simple move only generates one path:
       [rnum, '-', rnum1].
+
     A jump move generates one or more paths:
       [rnum, 'x', rnum1]
       [rnum, 'x', rnum1, 'x', rnum2]
@@ -1056,8 +1451,8 @@ class CheckersMove:
                 game.board.is_square_empty(row_jmp, col_jmp):
 
               rnum_jmp = game.board.rnum(row_jmp ,col_jmp)
-              path_jmp = [rnum, Checkers.Mop.JUMP, rnum_jmp]
-              #path_jmp = [rnum, (Checkers.Mop.JUMP, rnum_adj), rnum_jmp]
+              path_jmp = [rnum, Checkers.MopSym.JUMP, rnum_jmp]
+              #path_jmp = [rnum, (Checkers.MopSym.JUMP, rnum_adj), rnum_jmp]
               paths.append(path_jmp)
 
               # virtual move
@@ -1082,9 +1477,60 @@ class CheckersMove:
 
         # simple move
         elif not jumps_only:    # empty
-          paths.append([rnum, Checkers.Mop.SIMPLE, rnum_adj])
+          paths.append([rnum, Checkers.MopSym.SIMPLE, rnum_adj])
 
     return paths
+
+  def has_a_move(self, game, rnum):
+    try:
+      piece = game.board.at(rnum)
+    except CheckersError:
+      return False
+
+    row, col = game.board.rowcol(rnum)
+    deltas = game.get_move_pattern(piece)
+
+    # check all directions for moves
+    for drow, dcol in deltas:
+      row_adj = row + drow
+      col_adj = col + dcol
+
+      # adjacent is still on the board
+      if game.board.is_pos_on_board(row_adj, col_adj):
+        rnum_adj = game.board.rnum(row_adj ,col_adj)
+
+        # simple move available
+        if game.board.is_square_empty(rnum_adj):
+          return True
+
+        # adjacent is occupied
+        else:
+          piece_adj = game.board.at(rnum_adj)
+
+          # occupied by the opponent
+          if piece.foe() == piece_adj.color:
+            row_jmp = row_adj + drow
+            col_jmp = col_adj + dcol
+
+            # jump move available
+            if  game.board.is_pos_on_board(row_jmp, col_jmp) and \
+                game.board.is_square_empty(row_jmp, col_jmp):
+              return True
+
+    return False
+
+  def jumped_square(self, game, rnum0, rnum1):
+    row0,col0 = game.board.rowcol(rnum0)
+    row1,col1 = game.board.rowcol(rnum1)
+    if row1 > row0:
+      rowj = row1 - 1
+    else:
+      rowj = row1 + 1
+    if col1 > col0:
+      colj = col1 - 1
+    else:
+      colj = col1 + 1
+    return game.board.rnum(rowj, colj)
 
   def join(self, path0, path1):
     """
@@ -1130,7 +1576,7 @@ class CheckersMove:
     rnums = []
     for path in paths:
       for p in path:
-        if str(p) in Checkers.Mop.ANY:
+        if str(p) in Checkers.MopSym.ANY:
           continue
         elif p not in rnums:
           rnums.append(p)
@@ -1159,7 +1605,7 @@ class CheckersMove:
       Move path list.
     """
     try:
-      tokens = self.tokenize(input_line)
+      tokens = self.tokenize(nota)
     except RunTimeError as e:
       raise CheckersError(*e.args)
     path = []
@@ -1167,7 +1613,7 @@ class CheckersMove:
     i = 0
     for tok in tokens:
       if tok.type == expect[i]:
-        path.append(tok.val)
+        path.append(tok.value)
       else:
         raise CheckersError(f"{nota!r}", f"{tok.value!r}",
               f"expected {expect[i].lower()!r}, got {tok.type.lower()!r}")
@@ -1230,7 +1676,8 @@ MOVE                  Specify a move in standard checkers notation.
                         RNUM  Reachable number specifying board square.
                         -     Simple adjacent square slide move.
                         x     Jump capture move.
-                      S: inplay {uRArrow} inplay
+                      S: nogame {uRArrow} inplay   (auto-start)
+                         inplay {uRArrow} inplay
                          inplay {uRArrow} gameover (if a winner)
 
 peek RNUM             List (and show) candidate moves of a piece.
@@ -1348,8 +1795,8 @@ help                  Print this help.
     # show subcommands
     self.show_subcmds = {
       'board':      self.exec_show_board,
-      'history':    self.notimpl,
-      'kur':        self.notimpl,
+      'history':    self.exec_show_history,
+      'kur':        self.exec_show_kur,
       'winner':     self.notimpl,
     }
 
@@ -1373,12 +1820,12 @@ help                  Print this help.
 
     # interface token specification
     self.token_specification = [
-      ('NUMBER',    r'\d+'),                  # non-negative integer
-      ('MOP',       f'[{Checkers.Mop.ANY}]'), # move operators
-      ('ID',        r'[A-Za-z]+'),            # keywords and identifiers
-      ('NEWLINE',   r'\n'),                   # line endings
-      ('SKIP',      r'[ \t]+'),               # skip over spaces and tabs
-      ('MISMATCH',  r'.'),                    # any other character
+      ('NUMBER',    r'\d+'),                      # non-negative integer
+      ('MOP',       f'[{Checkers.MopSym.ANY}]'),  # move operators
+      ('ID',        r'[A-Za-z]+'),                # keywords and identifiers
+      ('NEWLINE',   r'\n'),                       # line endings
+      ('SKIP',      r'[ \t]+'),                   # skip over spaces and tabs
+      ('MISMATCH',  r'.'),                        # any other character
     ]
 
     # build regular expression
@@ -1597,7 +2044,7 @@ help                  Print this help.
         if tokens[0].value in self.cmds:
           self.cmds[tokens[0].value](tokens)
         elif tokens[0].type == 'NUMBER':
-          self.notimpl(tokens);
+          self.exec_move(tokens);
         else:
           raise CheckersCli.InputError(f"{tokens[0].value!r}",
                                       'unknown command',
@@ -1662,14 +2109,22 @@ help                  Print this help.
     self.game.board.print_board(with_pieces=True, with_annot=True,
                                 soi=self.move_rnums)
 
+  def exec_show_kur(self, tokens):
+    """ Execute show kur (captured pieces hell) subcommand. """
+    self.game.print_kur()
+
+  def exec_show_history(self, tokens):
+    """ Execute show history subcommand. """
+    self.game.print_history()
+
   def exec_clear(self, tokens):
     """ Execute clear command. """
     self._chk_arg_cnt(tokens, min_cnt=1, max_cnt=1)
     self.game.clear()
     self.move_paths = []
     self.move_rnums = []
-    self.autoshow()
     self.rsp("game reset to cleared state")
+    self.autoshow()
 
   def exec_setup(self, tokens):
     """ Execute setup command. """
@@ -1678,8 +2133,8 @@ help                  Print this help.
     self.game.setup()
     self.move_paths = []
     self.move_rnums = []
-    self.autoshow()
     self.rsp("game setup in standard game position")
+    self.autoshow()
 
   def exec_add_piece(self, tokens):
     """ Execute add piece command. """
@@ -1694,8 +2149,8 @@ help                  Print this help.
     piece = self.game.board.at(rnum)
     self.move_paths = []
     self.move_rnums = []
-    self.autoshow()
     self.rsp(f"{piece} added to square {rnum}")
+    self.autoshow()
 
   def exec_remove_piece(self, tokens):
     """ Execute add piece command. """
@@ -1709,8 +2164,8 @@ help                  Print this help.
       raise CheckersCli.InputError(*e.args)
     self.move_paths = []
     self.move_rnums = []
-    self.autoshow()
     self.rsp(f"{piece} removed from square {rnum}")
+    self.autoshow()
 
   def exec_start(self, tokens):
     """ Execute start command. """
@@ -1745,6 +2200,19 @@ help                  Print this help.
     self.move_rnums = []
     self.rsp(f"player {self.game.turn.name.lower()} resigned")
 
+  def exec_move(self, tokens):
+    """ Execute a checkers move. """
+    self._chk_arg_cnt(tokens, min_cnt=3)
+    self._chk_state(tokens, Checkers.State.NOT_STARTED, Checkers.State.IN_PLAY)
+    self._chk_ftypes(tokens, 'NUMBER', 'MOP', 'NUMBER')
+    path = [tok.value for tok in tokens]
+    #nota = ''.join(f"{tok.value}" for tok in tokens)
+    self.game.make_a_move(path)
+    color = self.game.board.at(path[-1]).color
+    self.rsp(f"{color.name.lower()} moved from {path[0]} to {path[-1]}")
+    self.autoshow()
+
+
   def exec_peek(self, tokens):
     """ Execute peek moves command. """
     self._chk_arg_cnt(tokens, min_cnt=2, max_cnt=2)
@@ -1752,12 +2220,11 @@ help                  Print this help.
     self._chk_ftypes(tokens[1:], 'NUMBER')
     rnum = tokens[1].value
     piece = self.game.board.at(rnum)
-    move = CheckersMove()
-    self.move_paths = move.find_move_paths(self.game, rnum)
-    self.move_rnums = move.rnums_in_paths(self.move_paths)
-    self.autoshow()
+    self.move_paths = self.game.take_a_peek(rnum)
+    self.move_rnums = self.game.mop.rnums_in_paths(self.move_paths)
     s = '    '.join(str(p)+'\n' for p in self.move_paths)
     self.rsp(f"{piece} on {rnum} candidate moves:\n    {s}")
+    self.autoshow()
 
 #------------------------------------------------------------------------------
 # Unit Test Main
