@@ -962,7 +962,7 @@ class CheckersMove:
       return False
 
     row, col = game.board.rowcol(rnum)
-    deltas = game.get_move_pattern(piece)
+    deltas = self.get_move_pattern(piece)
 
     # check all directions for moves
     for drow, dcol in deltas:
@@ -1146,6 +1146,13 @@ class Checkers:
     JUMP    = 'x'   # jump diagonal capture move 
     ANY     = '-x'  # any move
   
+  class EoG(Enum):
+    NO_EOG  = 0
+    ABORT   = 1
+    RESIGN  = 2
+    DEFEAT  = 3
+    DRAW    = 4
+  
   def __init__(self, name, size, mop=CheckersMove):
     """
     Initializer.
@@ -1165,6 +1172,8 @@ class Checkers:
     self._state     = Checkers.State.NOT_STARTED        # game not started
     self._move_num  = 0                                 # move number
     self._turn      = CheckersPiece.Color.BLACK         # black goes first
+    self._eog       = Checkers.EoG.NO_EOG               # end-of-game reason
+    self._winner    = None                              # game winner
 
   def __repr__(self):
     return  f"{self.__module__}.{self.__class__.__name__}"\
@@ -1181,6 +1190,8 @@ class Checkers:
     self._state     = Checkers.State.NOT_STARTED
     self._move_num  = 0
     self._turn      = CheckersPiece.Color.BLACK
+    self._eog       = Checkers.EoG.NO_EOG
+    self._winner    = None
   
   def setup(self):
     """ Starting position. """
@@ -1200,10 +1211,9 @@ class Checkers:
       #print(f'DBG: make_a_move: {path}')
     self.mop.execute_move(self, path)
     self.add_move_to_history(path)
-    if self.is_game_over():
-      pass
-    else:
-      self._turn = CheckersPiece.opposite_color(self.turn)
+    foe = CheckersPiece.opposite_color(self.turn)
+    if not self.is_game_over(foe):
+      self._turn = foe
       if self.turn == CheckersPiece.Color.BLACK:
         self._move_num += 1
 
@@ -1222,18 +1232,39 @@ class Checkers:
     self._move_num  = 1
     self._turn      = CheckersPiece.Color.BLACK
     # RDK add timer here
-    self.add_event_to_history("STARTED at x")
+    self.add_event_to_history("STARTED(t)")
 
   def stop(self):
-    self._state = Checkers.State.GAME_OVER  # game is over loosa loosa
-    # RDK record history here
+    self._state   = Checkers.State.GAME_OVER  # game is aborted
+    self._eog     = Checkers.EoG.ABORT
+    self._winner  = None
+    self.add_event_to_history("ABORTED")
 
   def resign(self, color):
-    self._state = Checkers.State.GAME_OVER  # game is over loosa loosa
-    # RDK record history here
+    self._state   = Checkers.State.GAME_OVER  # game is over loosa loosa
+    self._eog     = Checkers.EoG.RESIGN
+    self._winner  = CheckersPiece.opposite_color(color)
+    self.add_event_to_history(f"RESIGNED({color.name.lower()})")
 
-  def is_game_over(self):
-    return False
+  def is_game_over(self, color):
+    print(f"rdk: 0: {color.name}")
+    n = 0
+    for rnum,piece in self.board.pieces.items():
+      if piece.color == color:
+        n += 1
+        if self.mop.has_a_move(self, rnum):
+          return False
+    print(f"rdk: 1: {n}")
+    if n == 0:
+      self._eog       = Checkers.EoG.DEFEAT
+      self._winner    = CheckersPiece.opposite_color(color)
+      self.add_event_to_history(f"DEFEATED({color.name.lower()})")
+    else:
+      self._eog       = Checkers.EoG.DRAW
+      self._winner    = None
+      self.add_event_to_history(f"DRAW")
+    self._state = Checkers.State.GAME_OVER
+    return True
 
   def add_event_to_history(self, event):
     self._history.append(event)
@@ -1279,6 +1310,14 @@ class Checkers:
   @property
   def turn(self):
     return self._turn
+
+  @property
+  def eog(self):
+    return self._eog
+
+  @property
+  def winner(self):
+    return self._winner
 
   # . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   # Visualize
