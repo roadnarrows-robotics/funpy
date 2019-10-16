@@ -3,7 +3,7 @@ add 15 black man
 add 7 black man
 add 6 black man
 add 14 black king
-autoshow true board
+autoshow true board kur history outcome
 peek 6
 start
 6-9
