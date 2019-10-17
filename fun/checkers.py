@@ -3,6 +3,7 @@ import os
 from enum import Enum
 import collections
 import re
+import random
 
 def enumfactory(enummeta, value):
   """
@@ -821,7 +822,7 @@ class CheckersMove:
 
   def token_generator(self, nota):
     """
-    Token generator.
+    Checkers move token generator.
 
     Parameters:
       nota    String specifying move in standard notation.
@@ -843,7 +844,7 @@ class CheckersMove:
 
   def tokenize(self, nota):
     """
-    Tokenize notation.
+    Checkers move tokenize notation.
 
     Parameters:
       nota    String specifying move in standard notation.
@@ -1108,6 +1109,7 @@ class CheckersMove:
     else:
       raise CheckersError(f"path0 {path0[-1]} != path1 {path1[0]}")
 
+  @classmethod
   def max_path(self, paths):
     """
     Return the move path of maximum length. If two or move paths have the
@@ -1119,12 +1121,15 @@ class CheckersMove:
     Return:
       Returns path of maximum length. May be empty.
     """
+    # RDK TODO longest must be sum of deltas, not element count
+    # RDK TODO  10-14 --> 1  vs 10x19 --> 2
     path  = []
     for p in paths:
       if len(p) > len(path):
         path = p
     return path
 
+  @classmethod
   def rnums_in_paths(self, paths):
     """
     Build list of unique rnums listed in paths.
@@ -1295,6 +1300,18 @@ class Checkers:
     """
     return self.mop.find_move_paths(self, rnum)
 
+  def has_a_move(self, rnum):
+    """
+    Test if piece has any valid moves.
+
+    Parameters:
+      rnum  Piece position.
+      
+    Return:
+      True or False.
+    """
+    return self._mop.has_a_move(self, rnum)
+
   def goto_hell(self, piece):
     """
     Send a captured piece to hell.
@@ -1337,7 +1354,7 @@ class Checkers:
     self._state   = Checkers.State.GAME_OVER  # game is over loosa loosa
     self._eog     = Checkers.EoG.RESIGN
     self._winner  = CheckersPiece.opposite_color(color)
-    self.add_event_to_history(f"RESIGNED({enumlower(color.name)})")
+    self.add_event_to_history(f"RESIGNED({enumlower(color)})")
 
   def check_is_game_over(self, color):
     """
@@ -1356,7 +1373,7 @@ class Checkers:
     for rnum,piece in self.board.pieces.items():
       if piece.color == color:
         n += 1
-        if self.mop.has_a_move(self, rnum):
+        if self.has_a_move(rnum):
           return False
     if n == 0:
       self._eog       = Checkers.EoG.DEFEAT
@@ -1533,6 +1550,55 @@ class EnglishDraughtsVariation(Checkers):
   def __init__(self, size):
     pass
 
+
+#------------------------------------------------------------------------------
+# Class CheckersRandomPlayer
+#------------------------------------------------------------------------------
+class CheckersRandomPlayer:
+  """ Checkers autonomous player the plays the game by random choices. """
+  
+  def __init__(self, color):
+    """
+    Initializer.
+
+    Parameters:
+      color   This player's color.
+    """
+    self._color = enumfactory(CheckersPiece.Color, color);
+
+  def make_a_move(self, game):
+    """
+    Randomly make a move.
+
+    A piece of this autonomous player's color that has a move is chosen. Of
+    the possible moves made by the piece, the longest move path is chosen
+    and the move is executed.
+
+    Parameters:
+      game  The active checkers game.
+
+    Return:
+      Returns move path executed or empty list if no move is possible.
+    """
+    rnums = list(game.board.pieces)
+    while len(rnums) > 0:
+      i = random.randint(0, len(rnums)-1)
+      rnum = rnums[i]
+      if game.board.at(rnum).color != self.color:
+        del rnums[i]
+      elif game.has_a_move(rnum):
+        paths = game.take_a_peek(rnum)
+        path = CheckersMove.max_path(paths)
+        game.make_a_move(path)
+        return path
+      else:
+        del rnums[i]
+    return []
+
+  @property
+  def color(self):
+    return self._color
+
 #------------------------------------------------------------------------------
 # Class CheckersCli
 #------------------------------------------------------------------------------
@@ -1548,7 +1614,8 @@ The checkers command-line interface has three play states S:
   inplay    Game is in-play.
   gameover  Game has finished but a new game has not started.
 
-ANY is any of the above play states.
+ANY is any of the above play states. The 'clear' command is the only way to
+go back to the 'nogame' state.
 
 Commands may be valid in only a subset of the play states and may cause
 transitions to new states. The user prompt string indicates the play state.
@@ -1566,6 +1633,18 @@ autoshow SWITCH TOBJ [TOBJ...]
                         SWITCH  One of: enable disable on off true false
                         TOBJ    See 'show' command.
                       S: ANY{uArcArrow}
+
+bot BOT HALFMOVES     Use the specified autonomous bot (algorithm) to make a
+                      number of half moves. A full move is black then white.
+                      A half move is a move of one color only.
+                      For example: 'bot random 3' results in black-white-black
+                      or white-black-white move sequence, depending on whose
+                      initial turn it is.
+                        BOT       Autonomous algorithm One of:
+                                    random longest
+                        HALFMOVES Number of half moves.
+                      S: inplay {uRArrow} inplay
+                         inplay {uRArrow} gameover (on end-of-game condition)
 
 clear                 Clear game and board state.
                       S: ANY {uRArrow} nogame
@@ -1587,9 +1666,8 @@ MOVE                  Specify a move in standard checkers notation.
                         RNUM  Reachable number specifying board square.
                         -     Simple adjacent square slide move.
                         x     Jump capture move.
-                      S: nogame {uRArrow} inplay   (auto-start)
-                         inplay {uRArrow} inplay
-                         inplay {uRArrow} gameover (if end-of-game condition)
+                      S: inplay {uRArrow} inplay
+                         inplay {uRArrow} gameover (on end-of-game condition)
 
 peek RNUM             List (and show) candidate moves of a piece.
                         RNUM  Reachable number specifying board square.
@@ -1597,15 +1675,6 @@ peek RNUM             List (and show) candidate moves of a piece.
                          inplay {uRArrow} inplay
 
 quit                  Quit command-line interface mainloop and exit.
-
-random HALFMOVES      Make a number of random legal half moves. A full move is
-                      black then white. A half move is a move of one color.
-                      So 'random 3' results in black-white-black or
-                      white-black-white move sequence, depending on whose turn
-                      it is.
-                        HALFMOVES Number of half moves.
-                      S: inplay {uRArrow} inplay
-                         inplay {uRArrow} gameover (if end-of-game condition)
 
 remove RNUM           Manually remove a piece from the board.
                         RNUM    Reachable number specifying board square.
@@ -1632,7 +1701,7 @@ start                 Start the game. There must be at least one piece of each
 stop                  Stop the game. There will be no winner.
                       S: inplay {uRArrow} gameover
 
-help                  Print this help.
+help [list]           Print this help or only list command names.
 """
 
   # parsed token container
@@ -1703,8 +1772,8 @@ help                  Print this help.
       'setup':    self.exec_setup,
       'add':      self.exec_add_piece,
       'clear':    self.exec_clear,
+      'bot':      self.exec_bot,
       'peek':     self.exec_peek,
-      'random':   self.exec_random_moves,
       'remove':   self.exec_remove_piece,
       'clear':    self.exec_clear,
       'resign':   self.exec_resign,
@@ -1718,6 +1787,12 @@ help                  Print this help.
       'history':    self.exec_show_history,
       'kur':        self.exec_show_kur,
       'outcome':    self.exec_show_outcome,
+    }
+
+    # bot subcommands
+    self.bot_subcmds = {
+      'random':     self.exec_bot_random,
+      'longest':    self.notimpl, #self.exec_bot_longest,
     }
 
     # specific sets of keywords
@@ -1754,7 +1829,7 @@ help                  Print this help.
 
   def token_generator(self, input_line):
     """
-    Token generator.
+    Command-line interface token generator.
 
     Parameters:
       input_line    Line of input text.
@@ -1797,7 +1872,7 @@ help                  Print this help.
 
   def tokenize(self, input_line):
     """
-    Tokenize line of input.
+    Command-line interface tokenize line of input.
 
     Parameters:
       input_line    Line of input text.
@@ -1808,7 +1883,7 @@ help                  Print this help.
     # lexically parse and tokenize input
     tokens = []
     for tok in self.token_generator(input_line):
-      #print('DBG:', tok)
+      print('DBG:', tok)
       tokens.append(tok)
     return tokens
 
@@ -1995,6 +2070,7 @@ help                  Print this help.
 
   def exec_help(self, tokens):
     """ Execute help command. """
+    # RDK TODO list only argument
     self._chk_arg_cnt(tokens, min_cnt=1, max_cnt=1)
     print(CheckersCli.HelpStr)
 
@@ -2140,25 +2216,32 @@ help                  Print this help.
     self.rsp(f"player {enumlower(self.game.turn)} resigned")
     self.autoshow()
 
-  def exec_random_moves(self, tokens):
-    """ Execute a set of random checkers moves. """
-    self._chk_arg_cnt(tokens, min_cnt=2)
+  def exec_bot(self, tokens):
+    self._chk_arg_cnt(tokens, min_cnt=3)
     self._chk_state(tokens, Checkers.State.IN_PLAY)
-    self._chk_ftypes(tokens[1:], 'NUMBER')
-    maxmoves = tokens[1].value
-    while maxmoves > 0:
-      # find piece with moves
-      # find paths
-      # find longest path
-      # make move
-      if self.game.state != Checkers.State.IN_PLAY:
-        break
+    self._chk_ftypes(tokens[1:], 'ID', 'NUMBER')
+    for tok in tokens[1:]:
+      if tok.value in self.bot_subcmds:
+        self.bot_subcmds[tok.value](tokens)
+
+  def exec_bot_random(self, tokens):
+    """ Execute a set of random checkers moves. """
+    maxmoves = tokens[2].value
+    players = { 'black': CheckersRandomPlayer('black'),
+                'white': CheckersRandomPlayer('white') }
+    while maxmoves > 0 and self.game.state == Checkers.State.IN_PLAY:
+      turn = enumlower(self.game.turn)
+      path = players[turn].make_a_move(self.game)
+      if len(path) < 3:
+        break;
+      self.rsp(f"{turn}.random moved from {path[0]} to {path[-1]}")
+      self.autoshow()
       maxmoves -= 1
 
   def exec_move(self, tokens):
     """ Execute a checkers move. """
     self._chk_arg_cnt(tokens, min_cnt=3)
-    self._chk_state(tokens, Checkers.State.NOT_STARTED, Checkers.State.IN_PLAY)
+    self._chk_state(tokens, Checkers.State.IN_PLAY)
     self._chk_ftypes(tokens, 'NUMBER', 'MOP', 'NUMBER')
     path = [tok.value for tok in tokens]
     #nota = ''.join(f"{tok.value}" for tok in tokens)
@@ -2184,7 +2267,6 @@ help                  Print this help.
 # Unit Test Main
 #------------------------------------------------------------------------------
 if __name__ == '__main__':
-  import random
 
   if len(sys.argv) > 1:
     fname = sys.argv[1]
