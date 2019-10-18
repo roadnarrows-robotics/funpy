@@ -267,7 +267,7 @@ class CheckersBoard:
       size = size + 1
     self._size = size
 
-    self.dark_squares_per_row  = self._size // 2
+    self._dark_squares_per_row = self._size // 2
 
     self._rnum_min  = 1
     self._rnum_max  = self.dark_squares_per_row * self._size
@@ -663,6 +663,10 @@ class CheckersBoard:
   @property
   def size(self):
     return self._size
+
+  @property
+  def dark_squares_per_row(self):
+    return self._dark_squares_per_row
 
   def kings_row(self, color):
     color = enumfactory(CheckersPiece.Color, color)
@@ -1115,19 +1119,43 @@ class CheckersMove:
     Return the move path of maximum length. If two or move paths have the
     same maximum length, the first path is returned.
 
+    Length here is the distance traveled in number of squares.
+
     Paramaters:
       paths   List of move paths.
 
     Return:
       Returns path of maximum length. May be empty.
     """
-    # RDK TODO longest must be sum of deltas, not element count
-    # RDK TODO  10-14 --> 1  vs 10x19 --> 2
-    path  = []
-    for p in paths:
-      if len(p) > len(path):
-        path = p
-    return path
+    maxlen  = 0
+    maxpath = []
+    for path in paths:
+      m = CheckersMove.path_len(path)
+      if m > maxlen:
+        maxlen  = m
+        maxpath = path
+    return maxpath
+
+  @classmethod
+  def max_path_len(self, paths):
+    maxlen = 0
+    for path in paths:
+      m = CheckersMove.path_len(path)
+      if m > maxlen:
+        maxlen = m
+    return m
+
+  @classmethod
+  def path_len(self, path):
+    m = 0
+    i = 1
+    while i < len(path):
+      if path[i] == Checkers.MopSym.SIMPLE:
+        m += 1
+      elif path[i] == Checkers.MopSym.JUMP:
+        m += 2
+      i += 2
+    return m
 
   @classmethod
   def rnums_in_paths(self, paths):
@@ -1528,28 +1556,73 @@ class Checkers:
             **print_kwargs, end='\n')
 
 #------------------------------------------------------------------------------
-# Class EnglishDraughts
+# Class EnglishDraughtsVariation
 #------------------------------------------------------------------------------
-class EnglishDraughts(Checkers):
-  """ Also American Checkers """
-  StdSize = 8   # 8x8 board
-
-  def __init__(self):
-    Checkers.__init__(self, "English Draughts", EnglishDraughts.StdSize)
+class EnglishDraughtsVariation(Checkers):
+  def __init__(self, name, size, num_rows_per_side):
+    Checkers.__init__(self, name, size)
+    self._num_rows_per_side = num_rows_per_side
+    n = self.num_rows_per_side * self.board.dark_squares_per_row
+    self._num_pieces_per_side = n
+    self._black_rnum_start    = self.board.rnum_min
+    self._black_rnum_end      = self.black_rnum_start + n - 1
+    self._white_rnum_end      = self.board.rnum_max
+    self._white_rnum_start    = self.white_rnum_end - n + 1
 
   def setup(self):
     """ Setup game with the standard starting position. """
     Checkers.setup(self)
-    for rnum in range(1, 13):
+    for rnum in range(self.black_rnum_start, self.black_rnum_end+1):
       self.board.add_new_piece(rnum, 'black', 'man')
-    for rnum in range(21, 33):
+    for rnum in range(self.white_rnum_start, self.white_rnum_end+1):
       self.board.add_new_piece(rnum, 'white', 'man')
 
-##-
-class EnglishDraughtsVariation(Checkers):
-  def __init__(self, size):
-    pass
+  @property
+  def num_rows_per_side(self):
+    """ Standard starting position number of rows per side. """
+    return self._num_rows_per_side
 
+  @property
+  def num_pieces_per_side(self):
+    """ Standard starting position number of pieces per side. """
+    return self._num_pieces_per_side
+
+  @property
+  def black_rnum_start(self):
+    """ Standard starting position black starting reachable number. """
+    return self._black_rnum_start
+
+  @property
+  def black_rnum_end(self):
+    """ Standard starting position black ending reachable number. """
+    return self._black_rnum_end
+
+  @property
+  def white_rnum_start(self):
+    """ Standard starting position white starting reachable number. """
+    return self._white_rnum_start
+
+  @property
+  def white_rnum_end(self):
+    """ Standard starting position white ending reachable number. """
+    return self._white_rnum_end
+
+#------------------------------------------------------------------------------
+# Class EnglishDraughts
+#------------------------------------------------------------------------------
+class EnglishDraughts(EnglishDraughtsVariation):
+  """ Also American Checkers """
+  StdSize = 8   # 8x8 board
+  StdRows = 3   # rows per side
+
+  def __init__(self):
+    EnglishDraughtsVariation.__init__(self, "English Draughts",
+                                  EnglishDraughts.StdSize,
+                                  EnglishDraughts.StdRows)
+
+  def setup(self):
+    """ Setup game with the standard starting position. """
+    EnglishDraughtsVariation.setup(self)
 
 #------------------------------------------------------------------------------
 # Class CheckersRandomPlayer
@@ -1588,12 +1661,70 @@ class CheckersRandomPlayer:
         del rnums[i]
       elif game.has_a_move(rnum):
         paths = game.take_a_peek(rnum)
-        path = CheckersMove.max_path(paths)
+        path = game.mop.max_path(paths)
         game.make_a_move(path)
         return path
       else:
         del rnums[i]
     return []
+
+  @property
+  def color(self):
+    return self._color
+
+#------------------------------------------------------------------------------
+# Class CheckersRandomPlayer
+#------------------------------------------------------------------------------
+class CheckersRandLongestPlayer:
+  """
+  Checkers autonomous player the plays the game by random choices of
+  of pieces with longest paths.
+  """
+  
+  def __init__(self, color):
+    """
+    Initializer.
+
+    Parameters:
+      color   This player's color.
+    """
+    self._color = enumfactory(CheckersPiece.Color, color);
+
+  def make_a_move(self, game):
+    """
+    Randomly make a move.
+
+    A piece of this autonomous player's color that has a move is chosen. Of
+    the possible moves made by the piece, the longest move path is chosen
+    and the move is executed.
+
+    Parameters:
+      game  The active checkers game.
+
+    Return:
+      Returns move path executed or empty list if no move is possible.
+    """
+    rnums     = list(game.board.pieces)
+    maxlen    = 0
+    maxrnums  = []
+    for rnum in  rnums:
+      if game.board.at(rnum).color != self.color:
+        continue
+      elif game.has_a_move(rnum):
+        paths = game.take_a_peek(rnum)
+        m = game.mop.max_path_len(paths)
+        if m > maxlen:
+          maxlen = m
+          maxrnums = [rnum]
+        elif m == maxlen:
+          maxrnums.append(rnum)
+    if len(maxrnums) > 0:
+      rnum = random.choice(maxrnums)
+      path = game.mop.max_path(game.take_a_peek(rnum))
+      game.make_a_move(path)
+      return path
+    else:
+      return []
 
   @property
   def color(self):
@@ -1609,6 +1740,7 @@ class CheckersCli:
   uArcArrow = "\u21ba"
 
   HelpStr = f"""\
+Checkers Help:
 The checkers command-line interface has three play states S:
   nogame    Game has not started.
   inplay    Game is in-play.
@@ -1640,8 +1772,11 @@ bot BOT HALFMOVES     Use the specified autonomous bot (algorithm) to make a
                       For example: 'bot random 3' results in black-white-black
                       or white-black-white move sequence, depending on whose
                       initial turn it is.
-                        BOT       Autonomous algorithm One of:
-                                    random longest
+                        BOT       Autonomous algorithm. One of:
+                                    random   randomly choose a piece and move
+                                             it along its longest path
+                                    longest  randomly choose a piece of pieces
+                                             with the longest path
                         HALFMOVES Number of half moves.
                       S: inplay {uRArrow} inplay
                          inplay {uRArrow} gameover (on end-of-game condition)
@@ -1767,6 +1902,7 @@ help [list]           Print this help or only list command names.
       'help':     self.exec_help,
       'quit':     self.exec_quit,
       'autoshow': self.exec_autoshow,
+      'game':     self.exec_game,
       'config':   self.exec_config,
       'show':     self.exec_show,
       'setup':    self.exec_setup,
@@ -1792,7 +1928,7 @@ help [list]           Print this help or only list command names.
     # bot subcommands
     self.bot_subcmds = {
       'random':     self.exec_bot_random,
-      'longest':    self.notimpl, #self.exec_bot_longest,
+      'longest':    self.exec_bot_longest,
     }
 
     # specific sets of keywords
@@ -1883,7 +2019,7 @@ help [list]           Print this help or only list command names.
     # lexically parse and tokenize input
     tokens = []
     for tok in self.token_generator(input_line):
-      print('DBG:', tok)
+      #print('DBG:', tok)
       tokens.append(tok)
     return tokens
 
@@ -2070,9 +2206,17 @@ help [list]           Print this help or only list command names.
 
   def exec_help(self, tokens):
     """ Execute help command. """
-    # RDK TODO list only argument
-    self._chk_arg_cnt(tokens, min_cnt=1, max_cnt=1)
-    print(CheckersCli.HelpStr)
+    self._chk_arg_cnt(tokens, min_cnt=1, max_cnt=2)
+    if len(tokens) == 1:
+      self.rsp(CheckersCli.HelpStr)
+    elif tokens[1].value == 'list':
+      cmds = list(self.cmds)
+      cmds.append('MOVE')
+      cmds.sort()
+      self.rsp(' '.join(s for s in cmds))
+    else:
+      raise CheckersCli.InputError(f"{tokens[1].value!r}",
+            'unknown help argument', token=tokens[1])
 
   def exec_quit(self, tokens):
     """ Execute quit command. """
@@ -2139,6 +2283,28 @@ help [list]           Print this help or only list command names.
     self.move_rnums = []
     self.rsp("game reset to cleared state")
     self.autoshow()
+
+  def exec_game(self, tokens):
+    self._chk_arg_cnt(tokens, min_cnt=1, max_cnt=3)
+    self._chk_state(tokens, Checkers.State.NOT_STARTED)
+    game = 'englishdraughts'
+    size = 8
+    for tok in tokens[1:]:
+      if tok.type == 'ID':
+        game = tok.value
+        if game != 'englishdraughts':
+          raise CheckersCli.InputError(f"{tok.value!r}", 'unsupported game')
+      elif tok.type == 'NUMBER':
+        size = tok.value
+        if size < 4:
+          raise CheckersCli.InputError(f"{tok.value!r}", 'size too small')
+      else:
+        raise CheckersCli.InputError(f"{tok.type!r}", 'expected argument type')
+    if size == EnglishDraughts.StdSize:
+      self.game = EnglishDraughts()
+    else:
+      self.game = EnglishDraughtsVariation("English Draught Variation", size, 3)
+    self.config['game'] = f"{self.game}"
 
   def exec_setup(self, tokens):
     """ Execute setup command. """
@@ -2220,9 +2386,12 @@ help [list]           Print this help or only list command names.
     self._chk_arg_cnt(tokens, min_cnt=3)
     self._chk_state(tokens, Checkers.State.IN_PLAY)
     self._chk_ftypes(tokens[1:], 'ID', 'NUMBER')
-    for tok in tokens[1:]:
-      if tok.value in self.bot_subcmds:
-        self.bot_subcmds[tok.value](tokens)
+    alg = tokens[1]
+    if alg.value in self.bot_subcmds:
+      self.bot_subcmds[alg.value](tokens)
+    else:
+      raise CheckersCli.InputError(f"{alg.value!r}",
+            'unknown bot algorithm', token=alg)
 
   def exec_bot_random(self, tokens):
     """ Execute a set of random checkers moves. """
@@ -2235,6 +2404,20 @@ help [list]           Print this help or only list command names.
       if len(path) < 3:
         break;
       self.rsp(f"{turn}.random moved from {path[0]} to {path[-1]}")
+      self.autoshow()
+      maxmoves -= 1
+
+  def exec_bot_longest(self, tokens):
+    """ Execute a set of random checkers longest moves. """
+    maxmoves = tokens[2].value
+    players = { 'black': CheckersRandLongestPlayer('black'),
+                'white': CheckersRandLongestPlayer('white') }
+    while maxmoves > 0 and self.game.state == Checkers.State.IN_PLAY:
+      turn = enumlower(self.game.turn)
+      path = players[turn].make_a_move(self.game)
+      if len(path) < 3:
+        break;
+      self.rsp(f"{turn}.randlongest moved from {path[0]} to {path[-1]}")
       self.autoshow()
       maxmoves -= 1
 

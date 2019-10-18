@@ -1,12 +1,3 @@
-add 18 white man
-add 15 black man
-add 7 black man
-add 6 black man
-add 14 black king
-autoshow true board kur history outcome
-peek 6
+autoshow true board history outcome
+setup
 start
-6-9
-18 x 11 x 2
-14-10
-2-6
