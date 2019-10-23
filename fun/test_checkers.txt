@@ -1,3 +1,4 @@
 autoshow true board history outcome
+bot black random
+bot white longest
 setup
-start

@@ -1,8 +1,26 @@
-import sys
-import os
+"""
+The game of checkers (draughts).
+
+Package:
+  RoadNarrows fun package.
+
+Link:
+  https://github.com/roadnarrows-robotics/
+
+Copyright:
+  (C) 2019. RoadNarrows LLC
+  http://www.roadnarrows.com
+  All Rights Reserved
+
+License:
+  MIT
+"""
+
 from enum import Enum
 import collections
 import re
+import time
+from datetime import timedelta
 import random
 
 def enumfactory(enummeta, value):
@@ -211,6 +229,10 @@ class CheckersPiece:
   def ident(self):
     return self._ident
 
+  @property
+  def figurine(self):
+    return self.Figurines[self.color][self.caste]
+
   def foe(self):
     """ 
     Get this piece's foe's color.
@@ -281,7 +303,7 @@ class CheckersBoard:
       f"(size={self._size!r})"
 
   def __str__(self):
-    return f"{self._size}x{self._size} checker board"
+    return f"{self._size}x{self._size} checkers board"
 
   def __getitem__(self, rnum):
     """ __getitem__(self, rnum) <==> pieces[rnum] """
@@ -896,13 +918,13 @@ class CheckersMove:
     and a jump move.
 
     A simple move only generates one path:
-      [rnum, '-', rnum1].
+      [rnum, '-', rnum_1].
 
     A jump move generates one or more paths:
-      [rnum, 'x', rnum1]
-      [rnum, 'x', rnum1, 'x', rnum2]
+      [rnum, 'x', rnum_1]
+      [rnum, 'x', rnum_1, 'x', rnum_2]
         ...
-      [rnum, 'x', rnum1, 'x', rnum2, ..., 'x' rnumN]
+      [rnum, 'x', rnum_1, 'x', rnum_2, ..., 'x' rnum_N]
 
     Parameters:
       game        The checkers game the move will operate on.
@@ -1032,17 +1054,17 @@ class CheckersMove:
     # First pass: validate
     if len(path) < 3:
       raise CheckersError(f"{path!r}", "move path too short")
-    rnum0 = path[0]
-    piece = game.board.at(rnum0)
+    rnum_0 = path[0]
+    piece = game.board.at(rnum_0)
     if piece.color != game.turn:
       raise CheckersError(f"{piece}", f"it's {enumlower(game.turn)}'s turn")
-    candidate_paths = self.find_move_paths(game, rnum0)
+    candidate_paths = self.find_move_paths(game, rnum_0)
     if path not in candidate_paths:
       raise CheckersError(f"{self.path_to_nota(path)}", "not a legal move")
 
     # Second pass: execute move
     promoted  = piece.caste == CheckersPiece.Caste.KING
-    rnum_i    = rnum0
+    rnum_i    = rnum_0
     i         = 1
     while i < len(path):
       mop     = path[i]
@@ -1055,25 +1077,25 @@ class CheckersMove:
       rnum_i = rnum_j
       row_i, col_i = game.board.rowcol(rnum_i)
       if not promoted and row_i == game.board.kings_row(piece.color):
-        game.board.promote_piece(rnum0, only_kings_row=False)
+        game.board.promote_piece(rnum_0, only_kings_row=False)
         promoted= True
       i += 2
-    game.board.move_piece(rnum0, rnum_i)
+    game.board.move_piece(rnum_0, rnum_i)
 
-  def jumped_square(self, game, rnum0, rnum1):
+  def jumped_square(self, game, rnum_0, rnum_1):
     """
     Determined square jumped from source square to destination square.
 
     Parameters:
       game      The checkers game the move will operate on.
-      rnum0     Source square as reachable number.
-      rnum1     Destination square as reachable number.
+      rnum_0    Source square as reachable number.
+      rnum_1    Destination square as reachable number.
 
     Return:
       Returns jumped square as reachable number.
     """
-    row0,col0 = game.board.rowcol(rnum0)
-    row1,col1 = game.board.rowcol(rnum1)
+    row0,col0 = game.board.rowcol(rnum_0)
+    row1,col1 = game.board.rowcol(rnum_1)
     if row1 > row0:
       row0_j = row0 + 1
       row1_j = row1 - 1
@@ -1087,7 +1109,7 @@ class CheckersMove:
       col0_j = col0 - 1
       col1_j = col1 + 1
     if row0_j != row1_j or col0_j != col1_j:
-      raise CheckersError("cannot jump from {rnum0} to {rnum1}")
+      raise CheckersError("cannot jump from {rnum_0} to {rnum_1}")
     return game.board.rnum(row0_j, col0_j)
 
   def join(self, path0, path1):
@@ -1114,10 +1136,9 @@ class CheckersMove:
       raise CheckersError(f"path0 {path0[-1]} != path1 {path1[0]}")
 
   @classmethod
-  def max_path(self, paths):
+  def max_paths(klass, paths):
     """
-    Return the move path of maximum length. If two or move paths have the
-    same maximum length, the first path is returned.
+    Find the move paths of maximum length.
 
     Length here is the distance traveled in number of squares.
 
@@ -1125,28 +1146,30 @@ class CheckersMove:
       paths   List of move paths.
 
     Return:
-      Returns path of maximum length. May be empty.
+      List of paths of maximum length. May be empty.
     """
-    maxlen  = 0
-    maxpath = []
+    maxlen   = 0
+    maxpaths = []
     for path in paths:
-      m = CheckersMove.path_len(path)
+      m = klass.path_len(path)
       if m > maxlen:
-        maxlen  = m
-        maxpath = path
-    return maxpath
+        maxlen   = m
+        maxpaths = [path]
+      elif m == maxlen:
+        maxpaths.append(path)
+    return maxpaths
 
   @classmethod
-  def max_path_len(self, paths):
+  def max_path_len(klass, paths):
     maxlen = 0
     for path in paths:
-      m = CheckersMove.path_len(path)
+      m = klass.path_len(path)
       if m > maxlen:
         maxlen = m
     return m
 
   @classmethod
-  def path_len(self, path):
+  def path_len(klass, path):
     m = 0
     i = 1
     while i < len(path):
@@ -1158,7 +1181,7 @@ class CheckersMove:
     return m
 
   @classmethod
-  def rnums_in_paths(self, paths):
+  def rnums_in_paths(klass, paths):
     """
     Build list of unique rnums listed in paths.
 
@@ -1177,7 +1200,8 @@ class CheckersMove:
           rnums.append(p)
     return rnums
 
-  def path_to_nota(self, path):
+  @classmethod
+  def path_to_nota(klass, path):
     """
     Convert move path to standard checkers notation.
 
@@ -1265,6 +1289,9 @@ class Checkers:
     self._eog       = Checkers.EoG.NO_EOG               # end-of-game reason
     self._winner    = None                              # game winner
 
+    self.tstart     = 0                                 # start time
+    self.tend       = 0                                 # end time
+
   def __repr__(self):
     return  f"{self.__module__}.{self.__class__.__name__}"\
             f"({self._name!r}, {self._board.size!r}, {self._mop!r})"
@@ -1283,6 +1310,8 @@ class Checkers:
     self._turn      = CheckersPiece.Color.BLACK
     self._eog       = Checkers.EoG.NO_EOG
     self._winner    = None
+    self.tstart     = 0
+    self.tend       = 0
   
   def setup(self):
     """ Setup game with the standard starting position. """
@@ -1362,15 +1391,21 @@ class Checkers:
     self._state     = Checkers.State.IN_PLAY
     self._move_num  = 1
     self._turn      = CheckersPiece.Color.BLACK
-    # RDK add timer here
-    self.add_event_to_history("STARTED(t)")
+    self.tstart     = time.time()
+    self.tend       = 0
+    ts = time.localtime(self.tstart)
+    tstr = f"{ts.tm_hour:02}:{ts.tm_min:02}:{ts.tm_sec:02}"
+    self.add_event_to_history(f"STARTED@{tstr}")
 
   def stop(self):
     """ Stop (abort) an in-play game. """
     self._state   = Checkers.State.GAME_OVER  # game is aborted
     self._eog     = Checkers.EoG.ABORT
     self._winner  = None
-    self.add_event_to_history("ABORTED")
+    self.tend     = time.time()
+    ts = time.localtime(self.tend)
+    tstr = f"{ts.tm_hour:02}:{ts.tm_min:02}:{ts.tm_sec:02}"
+    self.add_event_to_history(f"ABORTED@{tstr}")
 
   def resign(self, color):
     """
@@ -1382,7 +1417,10 @@ class Checkers:
     self._state   = Checkers.State.GAME_OVER  # game is over loosa loosa
     self._eog     = Checkers.EoG.RESIGN
     self._winner  = CheckersPiece.opposite_color(color)
-    self.add_event_to_history(f"RESIGNED({enumlower(color)})")
+    self.tend     = time.time()
+    ts = time.localtime(self.tend)
+    tstr = f"{ts.tm_hour:02}:{ts.tm_min:02}:{ts.tm_sec:02}"
+    self.add_event_to_history(f"RESIGNED({enumlower(color)})@{tstr}")
 
   def check_is_game_over(self, color):
     """
@@ -1403,14 +1441,17 @@ class Checkers:
         n += 1
         if self.has_a_move(rnum):
           return False
+    self.tend = time.time()
+    ts = time.localtime(self.tend)
+    tstr = f"{ts.tm_hour:02}:{ts.tm_min:02}:{ts.tm_sec:02}"
     if n == 0:
       self._eog       = Checkers.EoG.DEFEAT
       self._winner    = CheckersPiece.opposite_color(color)
-      self.add_event_to_history(f"DEFEATED({enumlower(color)})")
+      self.add_event_to_history(f"DEFEATED({enumlower(color)})@{tstr}")
     else:
       self._eog       = Checkers.EoG.DRAW
       self._winner    = None
-      self.add_event_to_history(f"DRAW")
+      self.add_event_to_history(f"DRAW@{tstr}")
     self._state = Checkers.State.GAME_OVER
     return True
 
@@ -1496,7 +1537,7 @@ class Checkers:
       del print_kwargs['end']
     print("  Captured:", **print_kwargs, end='\n')
     for color in [CheckersPiece.Color.BLACK, CheckersPiece.Color.WHITE]:
-      print(f"{enumlower(color)}: ", **print_kwargs, end='')
+      print(f"{enumcapitalize(color)}: ", **print_kwargs, end='')
       for cursed in self.kur[color]:
         print(f"{cursed.fqname()} ", **print_kwargs, end='')
       print('', **print_kwargs, end='\n')
@@ -1529,9 +1570,9 @@ class Checkers:
     if 'end' in print_kwargs:
       del print_kwargs['end']
     if self.state == Checkers.State.NOT_STARTED:
-      print("Game not started.", **print_kwargs, end='\n')
+      print("Game not started.", **print_kwargs, end=' ')
     elif self.state == Checkers.State.IN_PLAY:
-      print("Game is in play with no final outcome.", **print_kwargs, end='\n')
+      print(f"Game is in play with no final outcome.", **print_kwargs, end=' ')
     elif self.state == Checkers.State.GAME_OVER:
       if self.winner is not None:
         winner  = enumcapitalize(self.winner)
@@ -1541,19 +1582,32 @@ class Checkers:
         loser   = 'NoLoser'
       if self.eog == Checkers.EoG.NO_EOG:
         print("BUG: Game is over but EoG reason is no end-of-game.",
-            **print_kwargs, end='\n')
+            **print_kwargs, end=' ')
       elif self.eog == Checkers.EoG.ABORT:
         print(f"Game was aborted on move {self.move_num}.",
-            **print_kwargs, end='\n')
+            **print_kwargs, end=' ')
       elif self.eog == Checkers.EoG.RESIGN:
         print(f"{winner} won on move {self.move_num} as {loser} resigned.",
-            **print_kwargs, end='\n')
+            **print_kwargs, end=' ')
       elif self.eog == Checkers.EoG.DEFEAT:
         print(f"{winner} defeated {loser} on move {self.move_num}.",
-            **print_kwargs, end='\n')
+            **print_kwargs, end=' ')
       elif self.eog == Checkers.EoG.DRAW:
         print(f"Game ended in a draw on move {self.move_num}.",
-            **print_kwargs, end='\n')
+            **print_kwargs, end=' ')
+    if self.tstart > 0:
+      if self.tend > 0:
+        elapse = self.tend - self.tstart
+      else:
+        elapse = self.tend - time.time()
+    else:
+      elapse = 0
+    if elapse > 0:
+      #print(f"Elapse time {elapse:.2f}s", **print_kwargs, end='\n')
+      print(f"Elapse time {str(timedelta(seconds=elapse))}",
+          **print_kwargs, end='\n')
+    else:
+      print('', **print_kwargs, end='\n')
 
 #------------------------------------------------------------------------------
 # Class EnglishDraughtsVariation
@@ -1625,19 +1679,67 @@ class EnglishDraughts(EnglishDraughtsVariation):
     EnglishDraughtsVariation.setup(self)
 
 #------------------------------------------------------------------------------
-# Class CheckersRandomPlayer
+# Class CheckersBot
 #------------------------------------------------------------------------------
-class CheckersRandomPlayer:
-  """ Checkers autonomous player the plays the game by random choices. """
+class CheckersBot:
+  """ Checkers autonmous bot player abstract base class. """
+
+  def __init__(self, tag, color):
+    """
+    Initializer.
+
+    Parameters:
+      tag     Short one-word tag identifying type of player bot.
+      color   This bot player's color.
+    """
+    self._tag   = tag
+    self._color = enumfactory(CheckersPiece.Color, color);
+
+  def __repr__(self):
+    return  f"{self.__module__}.{self.__class__.__name__}"\
+            f"({self._tag!r}, {self._color!r})"
+
+  def __str__(self):
+    return self.fqname()
+
+  def fqname(self):
+    """ Return fully-qualified name. """
+    return f"{enumlower(self.color)}.{self.tag}"
+
+  def make_a_move(self, game):
+    """
+    Make a bot move. Implement in derived class.
+
+    Parameters:
+      game  The active checkers game.
+
+    Return:
+      Returns move path executed or empty list if no move is possible.
+    """
+    raise NotImplementedError("not implemented in CheckersBot abstract class")
+
+  @property
+  def tag(self):
+    return self._tag
+
+  @property
+  def color(self):
+    return self._color
+
+#------------------------------------------------------------------------------
+# Class CheckersRandomBot
+#------------------------------------------------------------------------------
+class CheckersRandomBot(CheckersBot):
+  """ Checkers autonomous bot player that plays the game by random choices. """
   
   def __init__(self, color):
     """
     Initializer.
 
     Parameters:
-      color   This player's color.
+      color   This bot player's color.
     """
-    self._color = enumfactory(CheckersPiece.Color, color);
+    CheckersBot.__init__(self, "random", color)
 
   def make_a_move(self, game):
     """
@@ -1661,24 +1763,22 @@ class CheckersRandomPlayer:
         del rnums[i]
       elif game.has_a_move(rnum):
         paths = game.take_a_peek(rnum)
-        path = game.mop.max_path(paths)
+        path = random.choice(paths)
         game.make_a_move(path)
         return path
       else:
         del rnums[i]
     return []
 
-  @property
-  def color(self):
-    return self._color
-
 #------------------------------------------------------------------------------
-# Class CheckersRandomPlayer
+# Class CheckersRandLongestBot
 #------------------------------------------------------------------------------
-class CheckersRandLongestPlayer:
+class CheckersRandLongestBot(CheckersBot):
   """
-  Checkers autonomous player the plays the game by random choices of
-  of pieces with longest paths.
+  Checkers autonomous bot player the plays the game by random choosing a
+  longest path from the pieces with longest paths.
+
+  A more selective random bot variation.
   """
   
   def __init__(self, color):
@@ -1688,7 +1788,7 @@ class CheckersRandLongestPlayer:
     Parameters:
       color   This player's color.
     """
-    self._color = enumfactory(CheckersPiece.Color, color);
+    CheckersBot.__init__(self, "randlongest", color)
 
   def make_a_move(self, game):
     """
@@ -1706,757 +1806,171 @@ class CheckersRandLongestPlayer:
     """
     rnums     = list(game.board.pieces)
     maxlen    = 0
-    maxrnums  = []
+    maxpaths  = {}
     for rnum in  rnums:
       if game.board.at(rnum).color != self.color:
         continue
       elif game.has_a_move(rnum):
-        paths = game.take_a_peek(rnum)
-        m = game.mop.max_path_len(paths)
+        paths = game.mop.max_paths(game.take_a_peek(rnum))
+        m = game.mop.path_len(paths[0]) # has a move, so must exist one path
         if m > maxlen:
-          maxlen = m
-          maxrnums = [rnum]
+          maxlen   = m
+          maxpaths = {}
+          maxpaths[rnum] = paths
         elif m == maxlen:
-          maxrnums.append(rnum)
-    if len(maxrnums) > 0:
-      rnum = random.choice(maxrnums)
-      path = game.mop.max_path(game.take_a_peek(rnum))
+          maxpaths[rnum] = paths
+    if len(maxpaths) > 0:
+      rnum = random.choice(list(maxpaths))    # randomly choose a piece
+      path = random.choice(maxpaths[rnum])    # randomly choose a path
       game.make_a_move(path)
       return path
     else:
       return []
-
-  @property
-  def color(self):
-    return self._color
-
-#------------------------------------------------------------------------------
-# Class CheckersCli
-#------------------------------------------------------------------------------
-class CheckersCli:
-  """ Checkers text command-line interface. """
-
-  uRArrow   = "\u2192"
-  uArcArrow = "\u21ba"
-
-  HelpStr = f"""\
-Checkers Help:
-The checkers command-line interface has three play states S:
-  nogame    Game has not started.
-  inplay    Game is in-play.
-  gameover  Game has finished but a new game has not started.
-
-ANY is any of the above play states. The 'clear' command is the only way to
-go back to the 'nogame' state.
-
-Commands may be valid in only a subset of the play states and may cause
-transitions to new states. The user prompt string indicates the play state.
-
-add RNUM COLOR CASTE  Manually add a piece to the board.
-                        RNUM    Reachable number specifying board square.
-                        COLOR   One of: black white
-                        CASTE   One of: man king
-                      S: nogame{uArcArrow}
-
-autoshow SWITCH TOBJ [TOBJ...] 
-                      Enable or disable autoshow of game tableau object(s).
-                      If enabled, the object(s) are automatically showed after
-                      every display altering event (e.g. move).
-                        SWITCH  One of: enable disable on off true false
-                        TOBJ    See 'show' command.
-                      S: ANY{uArcArrow}
-
-bot BOT HALFMOVES     Use the specified autonomous bot (algorithm) to make a
-                      number of half moves. A full move is black then white.
-                      A half move is a move of one color only.
-                      For example: 'bot random 3' results in black-white-black
-                      or white-black-white move sequence, depending on whose
-                      initial turn it is.
-                        BOT       Autonomous algorithm. One of:
-                                    random   randomly choose a piece and move
-                                             it along its longest path
-                                    longest  randomly choose a piece of pieces
-                                             with the longest path
-                        HALFMOVES Number of half moves.
-                      S: inplay {uRArrow} inplay
-                         inplay {uRArrow} gameover (on end-of-game condition)
-
-clear                 Clear game and board state.
-                      S: ANY {uRArrow} nogame
-
-config                List configuration.
-                      S: ANY{uArcArrow}
-
-game [GAME] [SIZE]    Specify game type and size.
-                        GAME    One of:   englishdraughts
-                                Default:  englishdraughts
-                        SIZE    Size of board in squares >= 4.
-                                Default: 8
-                      S: ANY {uRArrow} nogame
-
-MOVE                  Specify a move in standard checkers notation.
-                        RNUM - RNUM
-                        RNUM x RNUM [x RNUM...]
-                      where:
-                        RNUM  Reachable number specifying board square.
-                        -     Simple adjacent square slide move.
-                        x     Jump capture move.
-                      S: inplay {uRArrow} inplay
-                         inplay {uRArrow} gameover (on end-of-game condition)
-
-peek RNUM             List (and show) candidate moves of a piece.
-                        RNUM  Reachable number specifying board square.
-                      S: nogame {uRArrow} nogame
-                         inplay {uRArrow} inplay
-
-quit                  Quit command-line interface mainloop and exit.
-
-remove RNUM           Manually remove a piece from the board.
-                        RNUM    Reachable number specifying board square.
-                      S: nogame{uArcArrow}
-
-resign                Resign from game (you loose).
-                      S: inplay {uRArrow} gameover
-
-setup                 Set up game in the standard starting position.
-                      S: nogame{uArcArrow}
-
-show TOBJ [TOBJ...]   Show game tableau object(s)
-                        TOBJ   Game tableau object. One of:
-                          board     Board with pieces and annotation.
-                          history   Game history.
-                          kur       Pieces sent to Sumerian hell.
-                          outcome   Game outcome (any winner and reason).
-                      S: ANY{uArcArrow}
-
-start                 Start the game. There must be at least one piece of each
-                      color on the board to begin play.
-                      S: nogame {uRArrow} inplay
-
-stop                  Stop the game. There will be no winner.
-                      S: inplay {uRArrow} gameover
-
-help [list]           Print this help or only list command names.
-"""
-
-  # parsed token container
-  Token = collections.namedtuple('Token', ['type', 'value', 'line', 'column'])
-
-  class InputError(Exception):
-    """ Checkers command-line interface input exception class. """
-
-    def __init__(self, *args, token=None, line=None, column=None):
-      """
-      Initializer.
-
-      Parameters:
-        args    One or more error message strings.
-        token   Associated token where the error occurred.
-        line    Error line number.
-        column  Error column number in line.
-      """
-      self.args   = args
-      self.token  = token
-      self.line   = line
-      self.column = column
-      if self.token is not None:
-        self.line   = token.line
-        self.column = token.column
-
-    def __repr__(self):
-      return f"{self.__module__}.{self.__class__.__name__}"\
-            f"({', '.join([repr(s) for s in self.args])}, "\
-            f"token={self.token}, line={self.line}, column={self.column})"
-
-    def __str__(self):
-      return ': '.join(self.args)
-
-  def __init__(self):
-    """ Initializer. """
-    self.game = EnglishDraughts()
-    self.config = {
-      'autoshow': {
-        'board': False, 'history': False, 'kur': False, 'outcome': False
-      },
-      'game': f"{self.game}"
-    }
-    self.init_tokenizer()
-    self.line         = 0
-    self.done         = False
-    self.interactive  = True
-    self.script       = None
-    self.move_paths   = []
-    self.move_rnums   = []
-
-  def __repr__(self):
-    return  f"{self.__module__}.{self.__class__.__name__}"\
-            f"()"
-
-  def __str__(self):
-    return  f"{self.__class__.__name__}"
-
-  def init_tokenizer(self):
-    """ Initialize the tokenizer data. """
-    # command-line interface commands
-    self.cmds = {
-      'help':     self.exec_help,
-      'quit':     self.exec_quit,
-      'autoshow': self.exec_autoshow,
-      'game':     self.exec_game,
-      'config':   self.exec_config,
-      'show':     self.exec_show,
-      'setup':    self.exec_setup,
-      'add':      self.exec_add_piece,
-      'clear':    self.exec_clear,
-      'bot':      self.exec_bot,
-      'peek':     self.exec_peek,
-      'remove':   self.exec_remove_piece,
-      'clear':    self.exec_clear,
-      'resign':   self.exec_resign,
-      'start':    self.exec_start,
-      'stop':     self.exec_stop,
-    }
-
-    # show subcommands
-    self.show_subcmds = {
-      'board':      self.exec_show_board,
-      'history':    self.exec_show_history,
-      'kur':        self.exec_show_kur,
-      'outcome':    self.exec_show_outcome,
-    }
-
-    # bot subcommands
-    self.bot_subcmds = {
-      'random':     self.exec_bot_random,
-      'longest':    self.exec_bot_longest,
-    }
-
-    # specific sets of keywords
-    self.kw_cmds    = set(self.cmds)
-    self.kw_true    = {'on', 'enable', 'true'}
-    self.kw_false   = {'off', 'disable', 'false'}
-    self.kw_game    = {'englishdraughts'}
-    self.kw_tableau = set(self.show_subcmds)
-    self.kw_color   = {'black', 'white'}
-    self.kw_caste   = {'man', 'king'}
-
-    # all keywords
-    self.keywords = self.kw_cmds.copy()
-    self.keywords.update( self.kw_true,
-                          self.kw_false,
-                          self.kw_game,
-                          self.kw_tableau,
-                          self.kw_color,
-                          self.kw_caste )
-
-    # interface token specification
-    self.token_specification = [
-      ('NUMBER',    r'\d+'),                      # non-negative integer
-      ('MOP',       f'[{Checkers.MopSym.ANY}]'),  # move operators
-      ('ID',        r'[A-Za-z]+'),                # keywords and identifiers
-      ('NEWLINE',   r'\n'),                       # line endings
-      ('SKIP',      r'[ \t]+'),                   # skip over spaces and tabs
-      ('MISMATCH',  r'.'),                        # any other character
-    ]
-
-    # build regular expression
-    self.tok_regex = '|'.join('(?P<%s>%s)' % \
-                              pair for pair in self.token_specification)
-
-  def token_generator(self, input_line):
-    """
-    Command-line interface token generator.
-
-    Parameters:
-      input_line    Line of input text.
-
-    Yield:
-      Token.
-    """
-    for mo in re.finditer(self.tok_regex, input_line):
-      kind    = mo.lastgroup
-      value   = mo.group()
-      column  = mo.start()
-      if kind == 'NUMBER':
-        value = int(value)
-      elif kind == 'ID':
-        if value in self.kw_true:
-          kind = 'BOOLEAN'
-          value = True
-        elif value in self.kw_false:
-          kind = 'BOOLEAN'
-          value = False
-        elif value in self.kw_color:
-          kind = 'COLOR'
-          value = CheckersPiece.Color[value.upper()]
-        elif value in self.kw_caste:
-          kind = 'CASTE'
-          value = CheckersPiece.Caste[value.upper()]
-        elif value in self.kw_cmds:
-          kind = 'CMD'
-        #else:
-        #  kind = value
-      elif kind == 'NEWLINE':
-        #self.line += 1
-        continue
-      elif kind == 'SKIP':
-        continue
-      elif kind == 'MISMATCH':
-        raise CheckersCli.InputError(f"{value!r}", "unexpected token",
-                            line=self.line, column=column)
-      yield CheckersCli.Token(kind, value, self.line, column)
-
-  def tokenize(self, input_line):
-    """
-    Command-line interface tokenize line of input.
-
-    Parameters:
-      input_line    Line of input text.
-
-    Return:
-      Returns list of parsed tokens.
-    """
-    # lexically parse and tokenize input
-    tokens = []
-    for tok in self.token_generator(input_line):
-      #print('DBG:', tok)
-      tokens.append(tok)
-    return tokens
-
-  def prompt(self):
-    """ Create prompt strig from game state. """
-    if not self.interactive:
-      return ''
-    elif self.game.state == Checkers.State.NOT_STARTED:
-      ps1 = "nogame> "
-    elif self.game.state == Checkers.State.IN_PLAY:
-      ps1 = f"{self.game.move_num}. {enumlower(self.game.turn)}> "
-    elif self.game.state == Checkers.State.GAME_OVER:
-      ps1 = "gameover> "
-    else:
-      ps1 = "huh? "
-    return f"[{self.line}] {ps1}"
-
-  def error(self, *emsgs):
-    """ Print user input error in fixed format. """
-    if self.script is None:
-      print(f"[{self.line}] error: {': '.join(e for e in emsgs)}")
-    else:
-      print(f"{os.path.basename(self.script)} [{self.line}] "\
-            f"error: {': '.join(str(e) for e in emsgs)}")
-
-  def rsp(self, rmsg):
-    """ Print command response in fixed format. """
-    print(f"[{self.line}] {rmsg}")
-
-  def _chk_arg_cnt(self, tokens, min_cnt=1, max_cnt=None):
-    """
-    Check command argument count. Raises InputError if check fails.
-
-    Parameters:
-      tokens    List of tokens with tokens[0] being the command.
-      min_cnt   Minimum number of arguments including the command.
-      max_cnt   Maximum number of arguments including the command. If None
-                then no maximum.
-    """
-    ntoks = len(tokens)
-    if ntoks < min_cnt:
-      raise CheckersCli.InputError(f"{tokens[0].value!r}",
-                    f"{min_cnt} arguments required, but {ntoks} specified",
-                    token=tokens[0])
-    if max_cnt is not None and ntoks > max_cnt:
-      raise CheckersCli.InputError(f"{tokens[0].value!r}",
-                    f"{max_cnt} arguments allowed, but {ntoks} specified",
-                    token=tokens[0])
-
-  def _chk_ftypes(self, tokens, *ftypes):
-    """
-    Check command arguments are of the expected types.
-
-    Parameters:
-      tokens    List of tokens with tokens[0] being the command.
-      ftypes    Sequence of expected field types.
-    """
-    n = 0
-    for ft in ftypes:
-      if tokens[n].type != ft:
-        raise CheckersCli.InputError(f"{tokens[n].value!r}",
-                f"expected field type {ft!r}, but parsed {tokens[n].type!r}",
-                token=tokens[n])
-      n += 1
-
-  def _chk_state(self, tokens, *states):
-    """
-    Check if command is in allowed game play state. Raises InputError if
-    check fails.
-
-    Parameters:
-      tokens    List of tokens with tokens[0] being the command.
-      states    Valid state(s).
-    """
-    if self.game.state not in states:
-      raise CheckersCli.InputError(f"{tokens[0].value!r}",
-                f"command invalid in {self._s_state(self.game.state)!r} state",
-                token=tokens[0])
-
-  def _s_state(self, state):
-    """ Convert game play state to string. """
-    if self.game.state == Checkers.State.NOT_STARTED:
-      return "nogame"
-    elif self.game.state == Checkers.State.IN_PLAY:
-      return "inplay"
-    elif self.game.state == Checkers.State.GAME_OVER:
-      return "gameover"
-    else:
-      return "wtf"
-
-  def autoshow(self):
-    """ Auto show configured game components. """
-    if self.config['autoshow']['board']:
-      self.game.board.print_board(with_pieces=True, with_annot=True,
-                                  soi=self.move_rnums)
-      print('')
-    if self.config['autoshow']['kur']:
-      if  len(self.game.kur[CheckersPiece.Color.BLACK]) > 0 or \
-          len(self.game.kur[CheckersPiece.Color.WHITE]) > 0:
-        self.game.print_kur()
-        print('')
-    if self.config['autoshow']['history']:
-      if len(self.game.history) > 0:
-        self.game.print_history()
-        print('')
-    if self.config['autoshow']['outcome']:
-      if self.game.state == Checkers.State.GAME_OVER:
-        self.game.print_outcome()
-        print('')
-
-  def mainloop(self, script=None):
-    """ Process and execute user input main loop. """
-    self.line         = 0
-    self.done         = False
-    self.script       = script
-    self.interactive  = sys.stdin.isatty()
-    self.move_paths   = []
-    self.move_rnums   = []
-
-    # script file specified - open
-    if self.script is not None:
-      try:
-        scrin = open(self.script, 'r')
-      except (FileNotFoundError, IOError) as e:
-        self.error(*e.args)
-        scrin = None
-    else:
-      scrin = None
-
-    while not self.done:
-      self.line += 1
-
-      # read line from script file
-      if scrin is not None:
-        try:
-          input_line = scrin.readline()
-        except IOError as e:
-          self.error(*e.args)
-          scrin.close()
-          scrin = None
-        else:
-          if not input_line:
-            scrin.close()
-            scrin = None
-            self.line = 0
-
-      # read line from stdin, prompting if interactive
-      else:
-        try:
-          input_line = input(self.prompt())
-        except EOFError:
-          self.done = True
-
-      # lexically parse and tokenize input
-      try:
-        tokens = self.tokenize(input_line)
-      except CheckersCli.InputError as e:
-        self.error(*e.args)
-        continue
-
-      # empty line
-      if len(tokens) == 0:
-        continue
-
-      # exec command
-      try:
-        if tokens[0].value in self.cmds:
-          self.cmds[tokens[0].value](tokens)
-        elif tokens[0].type == 'NUMBER':
-          self.exec_move(tokens);
-        else:
-          raise CheckersCli.InputError(f"{tokens[0].value!r}",
-                                      'unknown command',
-                                      token=tokens[0])
-      except CheckersCli.InputError as e:
-        self.error(*e.args)
-      except CheckersError as e:
-        self.error(*e.args)
-
-  def notimpl(self, tokens):
-    """ [Sub]command not implemented. """
-    cmd = ' '.join(str(tok.value) for tok in tokens)
-    raise CheckersCli.InputError(f"{cmd!r}", "not implemented")
-
-  def exec_help(self, tokens):
-    """ Execute help command. """
-    self._chk_arg_cnt(tokens, min_cnt=1, max_cnt=2)
-    if len(tokens) == 1:
-      self.rsp(CheckersCli.HelpStr)
-    elif tokens[1].value == 'list':
-      cmds = list(self.cmds)
-      cmds.append('MOVE')
-      cmds.sort()
-      self.rsp(' '.join(s for s in cmds))
-    else:
-      raise CheckersCli.InputError(f"{tokens[1].value!r}",
-            'unknown help argument', token=tokens[1])
-
-  def exec_quit(self, tokens):
-    """ Execute quit command. """
-    self.done = True
-
-  def exec_autoshow(self, tokens):
-    """ Execute autoshow command. """
-    self._chk_arg_cnt(tokens, min_cnt=3)
-    self._chk_ftypes(tokens[1:], 'BOOLEAN', 'ID')
-    v = tokens[1].value
-    for tok in tokens[2:]:
-      if tok.value in self.kw_tableau:
-        self.config['autoshow'][tok.value] = v
-      else:
-        raise CheckersCli.InputError(f"{tok.value!r}",
-            'unknown tableau game object',
-            token=tok)
-    s = ''
-    for k,v in self.config['autoshow'].items():
-      s += f"{k}({str(v).lower()}) "
-    self.rsp(f"autoshow: {s}")
-
-  def exec_config(self, tokens):
-    """ Execute config command. """
-    s = f"    game:     {self.config['game']}\n"
-    s += "    autoshow: "
-    for k,v in self.config['autoshow'].items():
-      s += f"{k}({str(v).lower()}) "
-    self.rsp(f"configuration:\n{s}")
-
-  def exec_show(self, tokens):
-    """ Execute show command. """
-    self._chk_arg_cnt(tokens, min_cnt=2)
-    for tok in tokens[1:]:
-      if tok.value in self.show_subcmds:
-        self.show_subcmds[tok.value](tokens)
-      else:
-        raise CheckersCli.InputError(f"{tok.value!r}",
-            'unknown tableau game object',
-            token=tok)
-
-  def exec_show_board(self, tokens):
-    """ Execute show board subcommand. """
-    self.game.board.print_board(with_pieces=True, with_annot=True,
-                                soi=self.move_rnums)
-
-  def exec_show_kur(self, tokens):
-    """ Execute show kur (captured pieces hell) subcommand. """
-    self.game.print_kur()
-
-  def exec_show_history(self, tokens):
-    """ Execute show history subcommand. """
-    self.game.print_history()
-
-  def exec_show_outcome(self, tokens):
-    """ Execute show outcome subcommand. """
-    self.game.print_outcome()
-
-  def exec_clear(self, tokens):
-    """ Execute clear command. """
-    self._chk_arg_cnt(tokens, min_cnt=1, max_cnt=1)
-    self.game.clear()
-    self.move_paths = []
-    self.move_rnums = []
-    self.rsp("game reset to cleared state")
-    self.autoshow()
-
-  def exec_game(self, tokens):
-    self._chk_arg_cnt(tokens, min_cnt=1, max_cnt=3)
-    self._chk_state(tokens, Checkers.State.NOT_STARTED)
-    game = 'englishdraughts'
-    size = 8
-    for tok in tokens[1:]:
-      if tok.type == 'ID':
-        game = tok.value
-        if game != 'englishdraughts':
-          raise CheckersCli.InputError(f"{tok.value!r}", 'unsupported game')
-      elif tok.type == 'NUMBER':
-        size = tok.value
-        if size < 4:
-          raise CheckersCli.InputError(f"{tok.value!r}", 'size too small')
-      else:
-        raise CheckersCli.InputError(f"{tok.type!r}", 'expected argument type')
-    if size == EnglishDraughts.StdSize:
-      self.game = EnglishDraughts()
-    else:
-      self.game = EnglishDraughtsVariation("English Draught Variation", size, 3)
-    self.config['game'] = f"{self.game}"
-
-  def exec_setup(self, tokens):
-    """ Execute setup command. """
-    self._chk_arg_cnt(tokens, min_cnt=1, max_cnt=1)
-    self._chk_state(tokens, Checkers.State.NOT_STARTED)
-    self.game.setup()
-    self.move_paths = []
-    self.move_rnums = []
-    self.rsp("game setup in standard game position")
-    self.autoshow()
-
-  def exec_add_piece(self, tokens):
-    """ Execute add piece command. """
-    self._chk_arg_cnt(tokens, min_cnt=4, max_cnt=4)
-    self._chk_state(tokens, Checkers.State.NOT_STARTED)
-    self._chk_ftypes(tokens[1:], 'NUMBER', 'COLOR', 'CASTE')
-    rnum, color, caste  = tokens[1].value, tokens[2].value, tokens[3].value
-    try:
-      self.game.board.add_new_piece(rnum, color, caste)
-    except CheckersError as e:
-      raise CheckersCli.InputError(*e.args)
-    piece = self.game.board.at(rnum)
-    self.move_paths = []
-    self.move_rnums = []
-    self.rsp(f"{piece} added to square {rnum}")
-    self.autoshow()
-
-  def exec_remove_piece(self, tokens):
-    """ Execute add piece command. """
-    self._chk_arg_cnt(tokens, min_cnt=2, max_cnt=2)
-    self._chk_state(tokens, Checkers.State.NOT_STARTED)
-    self._chk_ftypes(tokens[1:], 'NUMBER')
-    rnum = tokens[1].value
-    try:
-      piece = self.game.board.remove_piece(rnum)
-    except CheckersError as e:
-      raise CheckersCli.InputError(*e.args)
-    self.move_paths = []
-    self.move_rnums = []
-    self.rsp(f"{piece} removed from square {rnum}")
-    self.autoshow()
-
-  def exec_start(self, tokens):
-    """ Execute start command. """
-    self._chk_arg_cnt(tokens, min_cnt=1, max_cnt=1)
-    self._chk_state(tokens, Checkers.State.NOT_STARTED)
-    try:
-      self.game.start()
-    except CheckersError as e:
-      raise CheckersCli.InputError(*e.args)
-    self.move_paths = []
-    self.move_rnums = []
-    self.rsp("game started")
-
-  def exec_stop(self, tokens):
-    """ Execute stop command. """
-    self._chk_arg_cnt(tokens, min_cnt=1, max_cnt=1)
-    self._chk_state(tokens, Checkers.State.IN_PLAY)
-    try:
-      self.game.stop()
-    except CheckersError as e:
-      raise CheckersCli.InputError(*e.args)
-    self.move_paths = []
-    self.move_rnums = []
-    self.rsp("game stopped with no winner")
-    self.autoshow()
-
-  def exec_resign(self, tokens):
-    """ Execute resign command. """
-    self._chk_arg_cnt(tokens, min_cnt=1, max_cnt=1)
-    self._chk_state(tokens, Checkers.State.IN_PLAY)
-    self.game.resign(self.game.turn)
-    self.move_paths = []
-    self.move_rnums = []
-    self.rsp(f"player {enumlower(self.game.turn)} resigned")
-    self.autoshow()
-
-  def exec_bot(self, tokens):
-    self._chk_arg_cnt(tokens, min_cnt=3)
-    self._chk_state(tokens, Checkers.State.IN_PLAY)
-    self._chk_ftypes(tokens[1:], 'ID', 'NUMBER')
-    alg = tokens[1]
-    if alg.value in self.bot_subcmds:
-      self.bot_subcmds[alg.value](tokens)
-    else:
-      raise CheckersCli.InputError(f"{alg.value!r}",
-            'unknown bot algorithm', token=alg)
-
-  def exec_bot_random(self, tokens):
-    """ Execute a set of random checkers moves. """
-    maxmoves = tokens[2].value
-    players = { 'black': CheckersRandomPlayer('black'),
-                'white': CheckersRandomPlayer('white') }
-    while maxmoves > 0 and self.game.state == Checkers.State.IN_PLAY:
-      turn = enumlower(self.game.turn)
-      path = players[turn].make_a_move(self.game)
-      if len(path) < 3:
-        break;
-      self.rsp(f"{turn}.random moved from {path[0]} to {path[-1]}")
-      self.autoshow()
-      maxmoves -= 1
-
-  def exec_bot_longest(self, tokens):
-    """ Execute a set of random checkers longest moves. """
-    maxmoves = tokens[2].value
-    players = { 'black': CheckersRandLongestPlayer('black'),
-                'white': CheckersRandLongestPlayer('white') }
-    while maxmoves > 0 and self.game.state == Checkers.State.IN_PLAY:
-      turn = enumlower(self.game.turn)
-      path = players[turn].make_a_move(self.game)
-      if len(path) < 3:
-        break;
-      self.rsp(f"{turn}.randlongest moved from {path[0]} to {path[-1]}")
-      self.autoshow()
-      maxmoves -= 1
-
-  def exec_move(self, tokens):
-    """ Execute a checkers move. """
-    self._chk_arg_cnt(tokens, min_cnt=3)
-    self._chk_state(tokens, Checkers.State.IN_PLAY)
-    self._chk_ftypes(tokens, 'NUMBER', 'MOP', 'NUMBER')
-    path = [tok.value for tok in tokens]
-    #nota = ''.join(f"{tok.value}" for tok in tokens)
-    self.game.make_a_move(path)
-    color = self.game.board.at(path[-1]).color
-    self.rsp(f"{enumlower(color)} moved from {path[0]} to {path[-1]}")
-    self.autoshow()
-
-  def exec_peek(self, tokens):
-    """ Execute peek moves command. """
-    self._chk_arg_cnt(tokens, min_cnt=2, max_cnt=2)
-    self._chk_state(tokens, Checkers.State.NOT_STARTED, Checkers.State.IN_PLAY)
-    self._chk_ftypes(tokens[1:], 'NUMBER')
-    rnum = tokens[1].value
-    piece = self.game.board.at(rnum)
-    self.move_paths = self.game.take_a_peek(rnum)
-    self.move_rnums = self.game.mop.rnums_in_paths(self.move_paths)
-    s = '    '.join(str(p)+'\n' for p in self.move_paths)
-    self.rsp(f"{piece} on {rnum} candidate moves:\n    {s}")
-    self.autoshow()
 
 #------------------------------------------------------------------------------
 # Unit Test Main
 #------------------------------------------------------------------------------
 if __name__ == '__main__':
 
-  if len(sys.argv) > 1:
-    fname = sys.argv[1]
-  else:
-    fname = None
+  # ..... CheckersPiece
 
-  cli = CheckersCli()
-  cli.mainloop(script=fname)
+  print("  ** UT: CheckersPiece **")
 
-  sys.exit(0)
+  pieces = [  CheckersPiece('black', 'man'), CheckersPiece('black', 'king'),
+              CheckersPiece('white', 'man'), CheckersPiece('white', 'king') ]
+
+  for piece in pieces:
+    print("repr()    ", repr(piece))
+    print("str()     ", piece)
+    print("fqname()  ", piece.fqname())
+    print("figurine  ", piece.figurine)
+    print("foe()     ", piece.foe())
+    print('')
+
+  # ..... CheckersBoard
+
+  print("  ** UT: CheckersBoard **")
+
+  board = CheckersBoard(8)
+
+  print("repr()               ", repr(board))
+  print("str()                ", board)
+  print("size                 ", board.size)
+  print("dark_squares_per_row ", board.dark_squares_per_row)
+  print("kings_row('black')   ", board.kings_row('black'))
+  print("kings_row('white')   ", board.kings_row('white'))
+  print('')
+
+  board.print_board()
+  print('')
+
+  print("add_new_piece(1, 'black', 'man')")
+  board.add_new_piece(1, 'black', 'man')
+
+  rnum = 13
+  for piece in pieces:
+    print(f"board[{rnum}] = piece")
+    board[rnum] = piece
+    rnum += 1
+
+  board.print_board(with_pieces=True, with_annot=False)
+  print('')
+
+  print("add_new_piece(32, 'white', 'king')")
+  board.add_new_piece(32, 'white', 'king')
+
+  board.print_board(with_pieces=True, with_annot=True)
+  print('')
+
+  print("is_square_occupied(14)   ", board.is_square_occupied(14))
+  print("is_square_occupied(3,2)  ", board.is_square_occupied(3,2))
+  print("is_square_empty(14)      ", board.is_square_empty(14))
+  print("is_square_empty(3,2)     ", board.is_square_empty(3,2))
+  print("is_square_occupied(27)   ", board.is_square_occupied(27))
+  print("is_square_occupied(6,5)  ", board.is_square_occupied(6,5))
+  print("is_square_empty(27)      ", board.is_square_empty(27))
+  print("is_square_empty(6,5)     ", board.is_square_empty(6,5))
+  print("numof_pieces()           ", board.numof_pieces())
+  print("numof_black_pieces()     ", board.numof_black_pieces())
+  print("numof_white_pieces()     ", board.numof_white_pieces())
+  print("listof_positions()       ", board.listof_positions())
+  print("at(15)                   ", board.at(15))
+  print("pieces                   ", board.pieces)
+  print("rnum_min:                ", board.rnum_min)
+  print("rnum_max:                ", board.rnum_max)
+  print("is_dark_square(2,9)      ", CheckersBoard.is_dark_square(2,9))
+  print("is_light_square(2,9)     ", CheckersBoard.is_light_square(2,9))
+  print("is_dark_square(6,8)      ", CheckersBoard.is_dark_square(6,8))
+  print("is_light_square(6,8)     ", CheckersBoard.is_light_square(6,8))
+  print("is_pos_on_board(27)      ", board.is_pos_on_board(27))
+  print("is_pos_on_board(6,5)     ", board.is_pos_on_board(6,5))
+  print("is_pos_on_board(33)      ", board.is_pos_on_board(33))
+  print("is_pos_on_board(8,5)     ", board.is_pos_on_board(8,5))
+  print("square_color(1,1)        ", CheckersBoard.square_color(1,1))
+  print("square_color(1,12)       ", CheckersBoard.square_color(1,12))
+
+  print('')
+  print("move_piece(32,27)")
+  board.move_piece(32, 27)
+  print("piece = remove_piece(14)")
+  piece = board.remove_piece(14)
+  print("promote_piece(1, only_kings_row=False)")
+  board.promote_piece(1, only_kings_row=False)
+  print("replace_piece(4, piece)")
+  board.replace_piece(4, piece)
+
+  board.print_board(with_pieces=True, with_annot=True)
+  print('')
+
+  board = CheckersBoard(12)
+
+  print("repr()               ", repr(board))
+  print("str()                ", board)
+  print("size                 ", board.size)
+  print("dark_squares_per_row ", board.dark_squares_per_row)
+  print("kings_row('black')   ", board.kings_row('black'))
+  print("kings_row('white')   ", board.kings_row('white'))
+  print('')
+
+  board.print_board(with_pieces=True, with_annot=True)
+  print('')
+
+  # ..... Checkers
+
+  print("  ** UT: EnglishDraughts **")
+
+  draughts = EnglishDraughts()
+
+  print("repr()               ", repr(draughts))
+  print("str()                ", draughts)
+
+  print("setup()")
+  draughts.setup()
+
+  draughts.board.print_board(with_pieces=True, with_annot=True)
+  print('')
+
+  print("mop          ", str(draughts.mop))
+  print("state        ", draughts.state)
+  print("move_num     ", draughts.move_num)
+  print("turn         ", draughts.turn)
+  print("eog          ", draughts.eog)
+  print("winner       ", draughts.winner)
+  print('')
+
+  print("make_a_move('9-14')")
+  draughts.make_a_move('9-14')
+  print("make_a_move('23-18')")
+  draughts.make_a_move('23-18')
+
+  print("has_a_move(31)        ", draughts.has_a_move(31))
+  print("has_a_move(14)        ", draughts.has_a_move(14))
+
+  paths = draughts.take_a_peek(14)
+  rnums = draughts.mop.rnums_in_paths(paths)
+
+  print("take_a_peek(14)       ", paths)
+  print("rnums_in_paths(paths) ", rnums)
+
+  draughts.board.print_board(with_pieces=True, with_annot=True, soi=rnums)
+  print('')
